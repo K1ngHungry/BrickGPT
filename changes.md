@@ -18,11 +18,13 @@ This document details all changes made to support variable brick heights (e.g., 
 - **Methods**:
   - `from_json()`: Updated to unpack 3 dimensions (`l, w, h`) from library.
   - `from_txt()`: Updated regex to parse `LxWxH` format.
-  - `from_ldr()`: Updated to unpack 3 dimensions.
+  - `from_ldr()`: Updated to unpack 3 dimensions. Adjusted vertical scaling to 8 LDU (Plate) from 24 LDU (Brick).
+  - `to_ldr()`: Updated vertical scaling to 8 LDU (Plate) to prevent gaps between layers.
 
 #### `BrickStructure` Class
 
 - **Methods**:
+  - `stability_score()`: Fixed instantiation of temporary `BrickStructure` to use satisfy full `voxel_bricks.shape` instead of just `max_x`. This resolved "out of bounds" errors during stability checks.
   - `brick_floats()`: Updated "supported from above" check to use `z + h` (top of brick) instead of `z + 1`.
 
 #### `ConnectivityBrickStructure` Class
@@ -46,10 +48,16 @@ This document details all changes made to support variable brick heights (e.g., 
   - Added strict equality check `b1.h == b2.h` (only merge same-height bricks).
   - Preserves height in the new merged brick instatiation.
 
+#### `Mesh2Brick` Class
+
+- `mesh2voxel()`:
+  - Added Z-axis scaling (`vertices[:, 2] *= 3.0`) to increase vertical resolution by 3x (matching Plate vs Brick ratio).
+  - Updated voxelization loop condition to check `grid_shape` limits per dimension (anisotropic) rather than `max()`.
+
 #### `Voxel2Brick` Class
 
 - `_brickify_layer_greedy()`:
-  - Added `allowed_heights` argument (default `(3,)` for backward compatibility).
+  - Added `allowed_heights` argument (default `(3, 1)` to support plates).
   - Updated candidate generation loop to iterate over `allowed_heights`.
   - Updated `Brick` instantiation to pass `h` explicitly.
 - `_brickify_voxels_greedy()`:
@@ -72,6 +80,8 @@ This document details all changes made to support variable brick heights (e.g., 
   - **Neighbor Discovery**:
     - **Horizontal**: Checks `world_grid != 0` to detect neighbors. Uses `force_dict` keys to link force variables between adjacent voxels.
     - **Vertical**: Checks connections at the top (`z+h`) and bottom (`z`) faces.
+  - **Unit Scaling**: Updated `brick_unit_height` to 0.0032 (3.2mm, Plate height) to match the new dense vertical resolution.
+  - **Bug Fixes**: Added verification of force variable counts (`len(f_up)`) in torque calculations to prevent crashes when narrow bricks (1x1) support wide bricks.
 
 ## 4. Tests
 
@@ -82,6 +92,7 @@ This document details all changes made to support variable brick heights (e.g., 
 - Updated `test_brick` assertion for `slice` to expect a 3-tuple `(slice, slice, slice)`.
 
 ### `src/mesh2brick/tests/test_stability.py`
+
 - Added 3D connectivity tests for tall bricks.
 
 ## 5. Comparison with Upstream

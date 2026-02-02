@@ -26,7 +26,7 @@ def convert_objaverse_assets(resolution: int, output_dir: str = None):
     res_dir.mkdir(parents=True, exist_ok=True)
     print(f"Output directory: {res_dir}")
     
-    converter = Mesh2Brick(world_dim=(resolution, resolution, resolution))
+    converter = Mesh2Brick(world_dim=(resolution, resolution, resolution * 3))
 
     for file_path in glb_files:
         filename = file_path.name
