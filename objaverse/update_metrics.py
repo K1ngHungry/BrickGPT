@@ -21,6 +21,15 @@ def parse_logs(target_resolutions=None):
     model_data = defaultdict(dict) # {uid: {config_name: stats}}
     all_configs = set()
 
+    # Pre-populate model_data with all glb files found in assets
+    glb_files = sorted(glob.glob(os.path.join(ASSETS_DIR, '*.glb')))
+    for g in glb_files:
+        filename = os.path.basename(g)
+        uid = os.path.splitext(filename)[0]
+        short_uid = uid[:8]
+        # Just accessing it creates the entry in defaultdict
+        _ = model_data[short_uid]
+
     # Find all config directories
     config_dirs = glob.glob(os.path.join(ASSETS_DIR, 'res_*'))
     
@@ -184,7 +193,7 @@ def generate_html(model_data, sorted_configs):
                         
                     html += f"<td{css_class}>{val}</td>"
                 else:
-                    html += "<td>-</td>"
+                    html += "<td></td>"
             html += "</tr>\n"
             
     html += """        </tbody>
