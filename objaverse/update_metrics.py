@@ -17,7 +17,7 @@ LOG_PATTERN = re.compile(r"Converting ([a-f0-9]+)\.glb.*?"
 
 import argparse
 
-def parse_logs(target_resolution=None):
+def parse_logs(target_resolutions=None):
     model_data = defaultdict(dict) # {uid: {config_name: stats}}
     all_configs = set()
 
@@ -47,7 +47,7 @@ def parse_logs(target_resolution=None):
         except (IndexError, ValueError):
             continue
             
-        if target_resolution is not None and resolution != target_resolution:
+        if target_resolutions is not None and resolution not in target_resolutions:
             continue
 
         variant = ' '.join([p.capitalize() for p in parts[2:]])
@@ -55,9 +55,9 @@ def parse_logs(target_resolution=None):
         # Determine internal sort key and display name
         # We want to sort by Resolution, then by Variant order (Default < Plates < HeightPriority < Volume < Others)
         variant_rank = {
-            'Default': 1,
+            'Baseline': 1,
             'Plates': 2, 
-            'Heightpriority': 3,
+            'Height': 3,
             'Volume': 4
         }.get(variant, 99)
         
@@ -98,6 +98,7 @@ def parse_logs(target_resolution=None):
         resolution = int(parts[1])
         variant = ' '.join([p.capitalize() for p in parts[2:]])
         variant_rank = {
+            'Baseline': 0,
             'Default': 1,
             'Plates': 2, 
             'Heightpriority': 3,
@@ -261,10 +262,10 @@ def generate_html(model_data, sorted_configs):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Generate comparison metrics HTML.')
-    parser.add_argument('--resolution', type=int, default=None, help='Filter by resolution (e.g., 20)')
+    parser.add_argument('--resolutions', nargs='+', type=int, default=None, help='Filter by specific resolutions (e.g., 20 50)')
     args = parser.parse_args()
 
-    data, configs = parse_logs(target_resolution=args.resolution)
+    data, configs = parse_logs(target_resolutions=args.resolutions)
     html_content = generate_html(data, configs)
     
     with open(HTML_OUTPUT_PATH, 'w') as f:
