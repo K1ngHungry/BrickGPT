@@ -15,16 +15,15 @@ class Brick:
     """
     Represents a 1-unit-tall rectangular brick.
     """
-    l: int
+    h: int
     w: int
-    h: int = 3
     x: int
     y: int
     z: int
 
     @property
     def brick_id(self) -> int:
-        return dimensions_to_brick_id(self.l, self.w, self.h)
+        return dimensions_to_brick_id(self.h, self.w)
 
     @property
     def part_id(self) -> str:
@@ -32,19 +31,19 @@ class Brick:
 
     @property
     def ori(self) -> int:
-        return 1 if self.l > self.w else 0
+        return 1 if self.h > self.w else 0
 
     @property
     def area(self) -> int:
-        return self.l * self.w
+        return self.h * self.w
 
     @property
     def slice_2d(self) -> (slice, slice):
-        return slice(self.x, self.x + self.l), slice(self.y, self.y + self.w)
+        return slice(self.x, self.x + self.h), slice(self.y, self.y + self.w)
 
     @property
-    def slice(self) -> (slice, slice, slice):
-        return *self.slice_2d, slice(self.z, self.z + self.h)
+    def slice(self) -> (slice, slice, int):
+        return *self.slice_2d, self.z
 
     def __repr__(self):
         return self.to_txt()[:-1]
@@ -59,12 +58,12 @@ class Brick:
         }
 
     def to_txt(self) -> str:
-        return f'{self.l}x{self.w}x{self.h} ({self.x},{self.y},{self.z})\n'
+        return f'{self.h}x{self.w} ({self.x},{self.y},{self.z})\n'
 
     def to_ldr(self, base_height: float = 0) -> str:
-        x = (self.x + self.l * 0.5) * 20
+        x = (self.x + self.h * 0.5) * 20
         z = (self.y + self.w * 0.5) * 20
-        y = (self.z + base_height) * -8
+        y = (self.z + base_height) * -24
         matrix = '0 0 1 0 1 0 -1 0 0' if self.ori == 0 else '-1 0 0 0 1 0 0 0 -1'
         line = f'1 115 {x} {y} {z} {matrix} {self.part_id}\n'
         step_line = '0 STEP\n'
@@ -72,21 +71,21 @@ class Brick:
 
     @classmethod
     def from_json(cls, brick_json: dict):
-        l, w, h = brick_id_to_dimensions(brick_json['brick_id'])
+        h, w = brick_id_to_dimensions(brick_json['brick_id'])
         if brick_json['ori'] == 1:
-            l, w = w, l
+            h, w = w, h
         x, y, z = brick_json['x'], brick_json['y'], brick_json['z']
-        return cls(l=l, w=w, h=h, x=x, y=y, z=z)
+        return cls(h=h, w=w, x=x, y=y, z=z)
 
     @classmethod
     def from_txt(cls, brick_txt: str):
         brick_txt = brick_txt.strip()
-        match = re.fullmatch(r'(\d+)x(\d+)x(\d+) \((\d+),(\d+),(\d+)\)', brick_txt)
+        match = re.fullmatch(r'(\d+)x(\d+) \((\d+),(\d+),(\d+)\)', brick_txt)
         if match is None:
             raise ValueError(f'Text Format brick is ill-formatted: {brick_txt}')
 
-        l, w, h, x, y, z = map(int, match.group(1, 2, 3, 4, 5, 6))
-        return cls(l=l, w=w, h=h, x=x, y=y, z=z)
+        h, w, x, y, z = map(int, match.group(1, 2, 3, 4, 5))
+        return cls(h=h, w=w, x=x, y=y, z=z)
 
     @classmethod
     def from_ldr(cls, brick_ldr: str):
@@ -102,15 +101,15 @@ class Brick:
                 else:
                     raise ValueError(f'Invalid transformation matrix: {matrix_str}')
 
-                l, w, h = brick_id_to_dimensions(part_id_to_brick_id(part_id))
+                h, w = brick_id_to_dimensions(part_id_to_brick_id(part_id))
                 if ori == 1:
-                    l, w = w, l
+                    h, w = w, h
 
-                x = int(x0 / 20 - l * 0.5)
+                x = int(x0 / 20 - h * 0.5)
                 y = int(z0 / 20 - w * 0.5)
-                z = int(-y0 / 8)
+                z = int(-y0 / 24)
 
-                return cls(l=l, w=w, h=h, x=x, y=y, z=z)
+                return cls(h=h, w=w, x=x, y=y, z=z)
             case _:
                 raise ValueError(f"LDR format is ill-formatted: {brick_ldr}")
 
@@ -120,11 +119,8 @@ class BrickStructure:
     Represents a brick structure in the form of a list of bricks.
     """
 
-    def __init__(self, bricks: list[Brick], world_dim: int | tuple[int, int, int] = 20):
-        if isinstance(world_dim, int):
-            self.world_dim = (world_dim, world_dim, world_dim)
-        else:
-            self.world_dim = world_dim
+    def __init__(self, bricks: list[Brick], world_dim: int = 20):
+        self.world_dim = world_dim
 
         # Check if structure starts at ground level
         z0 = min((brick.z for brick in bricks), default=0)
@@ -133,7 +129,7 @@ class BrickStructure:
 
         # Build structure from bricks
         self.bricks = []
-        self.voxel_occupancy = np.zeros(self.world_dim, dtype=int)
+        self.voxel_occupancy = np.zeros((world_dim, world_dim, world_dim), dtype=int)
         for brick in bricks:
             self.add_brick(brick)
 
@@ -170,8 +166,8 @@ class BrickStructure:
         return any(not self.brick_in_bounds(brick) for brick in self.bricks)
 
     def brick_in_bounds(self, brick: Brick) -> bool:
-        return (all(slice_.start >= 0 and slice_.stop <= self.world_dim[i] for i, slice_ in enumerate(brick.slice_2d))
-                and 0 <= brick.z < self.world_dim[2])
+        return (all(slice_.start >= 0 and slice_.stop <= self.world_dim for slice_ in brick.slice_2d)
+                and 0 <= brick.z < self.world_dim)
 
     def has_collisions(self) -> bool:
         return np.any(self.voxel_occupancy > 1)
@@ -187,8 +183,8 @@ class BrickStructure:
             return False  # Supported by ground
         if np.any(self.voxel_occupancy[brick.slice_2d[0], brick.slice_2d[1], brick.z - 1]):
             return False  # Supported from below
-        if brick.z + brick.h < self.world_dim[2] and np.any(
-                self.voxel_occupancy[brick.slice_2d[0], brick.slice_2d[1], brick.z + brick.h]):
+        if brick.z != self.world_dim - 1 and np.any(
+                self.voxel_occupancy[brick.slice_2d[0], brick.slice_2d[1], brick.z + 1]):
             return False  # Supported from above
         return True
 
@@ -203,23 +199,23 @@ class BrickStructure:
         if self.has_out_of_bounds_bricks():
             raise ValueError('Cannot compute stability scores - structure has out of bounds bricks.')
         scores, _, _, _, _ = stability_score(self.to_json(), brick_library,
-                                             StabilityConfig(world_dimension=self.world_dim))
+                                             StabilityConfig(world_dimension=(self.world_dim,) * 3))
         return scores
 
     @classmethod
-    def from_json(cls, bricks_json: dict, world_dim: int | tuple[int, int, int] = 20):
+    def from_json(cls, bricks_json: dict, world_dim: int = 20):
         bricks = [Brick.from_json(v) for k, v in bricks_json.items() if k.isdigit()]
         return cls(bricks, world_dim=world_dim)
 
     @classmethod
-    def from_txt(cls, bricks_txt: str, world_dim: int | tuple[int, int, int] = 20):
+    def from_txt(cls, bricks_txt: str, world_dim: int = 20):
         bricks_txt = bricks_txt.split('\n')
         bricks_txt = [b for b in bricks_txt if b.strip()]  # Remove blank lines
         bricks = [Brick.from_txt(brick) for brick in bricks_txt]
         return cls(bricks, world_dim=world_dim)
 
     @classmethod
-    def from_ldr(cls, bricks_ldr: str, world_dim: int | tuple[int, int, int] = 20):
+    def from_ldr(cls, bricks_ldr: str, world_dim: int = 20):
         bricks_ldr = bricks_ldr.split('0 STEP')  # Split on step lines
         bricks_ldr = [b for b in bricks_ldr if b.strip()]  # Remove blank or whitespace-only lines
         bricks = [Brick.from_ldr(brick) for brick in bricks_ldr]
@@ -289,7 +285,7 @@ class ConnectivityBrickStructure:
         return self._node2component
 
     def stability_score(self) -> np.ndarray:
-        bricks = BrickStructure(list(self.bricks.values()), self.voxel_bricks.shape)
+        bricks = BrickStructure(list(self.bricks.values()), self.max_x)
         return bricks.stability_scores()
 
     def node_exists(self, node_id: int):
@@ -310,22 +306,20 @@ class ConnectivityBrickStructure:
         self.connection_graph.add_node(node)
         self.neighbor_graph.add_node(node)
         vert_neighbors = ({(node, self.voxel_bricks[x, y, brick.z - 1])
-                           for x in range(brick.x, brick.x + brick.l) for y in range(brick.y, brick.y + brick.w)
+                           for x in range(brick.x, brick.x + brick.h) for y in range(brick.y, brick.y + brick.w)
                            if brick.z > 0} |
-                          {(node, self.voxel_bricks[x, y, brick.z + brick.h])
-                           for x in range(brick.x, brick.x + brick.l) for y in range(brick.y, brick.y + brick.w)
-                           if brick.z + brick.h < self.max_z})
+                          {(node, self.voxel_bricks[x, y, brick.z + 1])
+                           for x in range(brick.x, brick.x + brick.h) for y in range(brick.y, brick.y + brick.w)
+                           if brick.z + 1 < self.max_z})
         vert_neighbors = list(filter(lambda e: e[1] != 0, vert_neighbors))  # Remove connections with empty bricks
-        horz_neighbors = set()
-        for z in range(brick.z, brick.z + brick.h):
-            horz_neighbors |= ({(node, self.voxel_bricks[brick.x - 1, y, z])
-                                for y in range(brick.y, brick.y + brick.w) if brick.x > 0} |
-                               {(node, self.voxel_bricks[brick.x + brick.l, y, z])
-                                for y in range(brick.y, brick.y + brick.w) if brick.x + brick.l < self.max_x} |
-                               {(node, self.voxel_bricks[x, brick.y - 1, z])
-                                for x in range(brick.x, brick.x + brick.l) if brick.y > 0} |
-                               {(node, self.voxel_bricks[x, brick.y + brick.w, z])
-                                for x in range(brick.x, brick.x + brick.l) if brick.y + brick.w < self.max_y})
+        horz_neighbors = ({(node, self.voxel_bricks[brick.x - 1, y, brick.z])
+                           for y in range(brick.y, brick.y + brick.w) if brick.x > 0} |
+                          {(node, self.voxel_bricks[brick.x + brick.h, y, brick.z])
+                           for y in range(brick.y, brick.y + brick.w) if brick.x + brick.h < self.max_x} |
+                          {(node, self.voxel_bricks[x, brick.y - 1, brick.z])
+                           for x in range(brick.x, brick.x + brick.h) if brick.y > 0} |
+                          {(node, self.voxel_bricks[x, brick.y + brick.w, brick.z])
+                           for x in range(brick.x, brick.x + brick.h) if brick.y + brick.w < self.max_y})
         horz_neighbors = list(filter(lambda e: e[1] != 0, horz_neighbors))  # Remove connections with empty bricks
         self.connection_graph.add_edges_from(vert_neighbors)
         self.neighbor_graph.add_edges_from(vert_neighbors + horz_neighbors)
