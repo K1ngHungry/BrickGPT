@@ -35,3 +35,4 @@ wandb
 *.log
 objaverse/assets
 objaverse/gallery.html
+objaverse/comparison_metrics.html
