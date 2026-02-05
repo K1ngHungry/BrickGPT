@@ -50,7 +50,9 @@ def convert_objaverse_assets(resolution: int, output_dir: str = None):
                 
             print(f"Saved to {res_dir.name}/{ldr_output_path.name}")
         except Exception as e:
+            import traceback
             print(f"FAILED to convert {filename} at resolution {resolution}: {e}")
+            print(traceback.format_exc())
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Convert Objaverse assets to LEGO bricks.")
