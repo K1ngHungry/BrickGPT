@@ -11,14 +11,15 @@ ASSETS_DIR = SCRIPT_DIR / "assets"
 """
 Scans assets directory for .ldr files and renders them to .png if the png doesn't exist
 """
-def render_assets(force_all=False):
-    if not ASSETS_DIR.exists():
-        print(f"Error: assets directory not found at {ASSETS_DIR}")
+def render_assets(directory, force_all=False):
+    target_dir = Path(directory).resolve()
+    if not target_dir.exists():
+        print(f"Error: directory not found at {target_dir}")
         return
 
     # Find all .ldr files
-    ldr_files = sorted(list(ASSETS_DIR.rglob("*.ldr")))
-    print(f"Found {len(ldr_files)} LDR files to check for rendering.")
+    ldr_files = sorted(list(target_dir.rglob("*.ldr")))
+    print(f"Found {len(ldr_files)} LDR files in {target_dir} to check for rendering.")
 
     # Prepare environment with local ldraw library
     env = os.environ.copy()
@@ -58,7 +59,8 @@ def render_assets(force_all=False):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Render Objaverse LDR files to PNG.")
+    parser.add_argument("directory", nargs="?", default=str(ASSETS_DIR), help="Directory to scan for LDR files")
     parser.add_argument("--force", action="store_true", help="Force re-rendering of existing PNGs")
     args = parser.parse_args()
     
-    render_assets(force_all=args.force)
+    render_assets(args.directory, force_all=args.force)

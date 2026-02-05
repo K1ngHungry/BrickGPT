@@ -1,27 +1,31 @@
 
 import os
-import re
+import sys
+import argparse
 from pathlib import Path
 
-# Paths relative to this script
+# Enhance sys.path to allow importing from the same directory
 SCRIPT_DIR = Path(__file__).parent.resolve()
+sys.path.append(str(SCRIPT_DIR))
+
+try:
+    from update_metrics import parse_logs
+except ImportError:
+    # Fallback if running from root without package structure
+    pass
+
 ASSETS_DIR = SCRIPT_DIR / "assets"
 HTML_OUTPUT = SCRIPT_DIR / "gallery.html"
 
-def generate_html(models_data, all_resolutions):
+def generate_html(models, configs, model_stats):
     """
-    Generates the HTML gallery grouped by Model ID.
-    models_data: {
-        'uid': {
-            'glb': path_to_glb,
-            'renders': { 20: path_to_png, 32: path_to_png, ... }
-        }
-    }
-    all_resolutions: Sorted list of all resolution integers found [20, 32, 50]
+    Generates the HTML gallery.
+    models: { 'uid': {'glb': path, 'renders': {config_id: png_path}} }
+    configs: List of config dicts from parse_logs [{'id': 'res_20_plates', 'display': '...', ...}]
+    model_stats: Dict of stats from parse_logs {short_uid: {config_id: {time, bricks, ...}}}
     """
     
-    # Calculate grid columns: 1 (Original) + N (Resolutions)
-    col_count = 1 + len(all_resolutions)
+    col_count = 1 + len(configs)
     
     html_content = f"""
 <!DOCTYPE html>
@@ -40,8 +44,9 @@ def generate_html(models_data, all_resolutions):
             border-radius: 16px;
             box-shadow: 0 4px 20px rgba(0,0,0,0.06);
             margin-bottom: 40px;
-            overflow: hidden;
+            overflow: visible;
             padding: 0;
+            border: 1px solid #e0e0e0;
         }}
         
         .model-header {{
@@ -50,61 +55,91 @@ def generate_html(models_data, all_resolutions):
             padding: 15px 25px;
             font-size: 1.1em;
             font-weight: 500;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
+            border-top-left-radius: 16px;
+            border-top-right-radius: 16px;
+            position: sticky;
+            top: 0;
+            z-index: 100;
         }}
         
         .comparison-grid {{
             display: grid;
             grid-template-columns: repeat({col_count}, 1fr);
             gap: 0;
-            divider: 1px solid #eee;
         }}
         
         .grid-item {{
             border-right: 1px solid #eee;
             position: relative;
             background: #fff;
-            aspect-ratio: 4/3; /* Standardize aspect ratio */
             display: flex;
-            align-items: center;
-            justify-content: center;
+            flex-direction: column;
             overflow: hidden;
+            min-height: 300px;
         }}
         
         .grid-item:last-child {{ border-right: none; }}
+
+        .col-header {{
+            background: #f8f9fa;
+            border-bottom: 1px solid #eee;
+            padding: 10px;
+            text-align: center;
+            font-weight: 600;
+            font-size: 0.9em;
+            color: #555;
+        }}
         
-        .label {{
-            position: absolute;
-            top: 10px;
-            left: 10px;
-            background: rgba(0,0,0,0.7);
-            color: white;
-            padding: 4px 10px;
-            font-size: 12px;
-            border-radius: 20px;
-            z-index: 10;
-            backdrop-filter: blur(4px);
-            font-weight: 500;
+        .viewport {{
+            flex-grow: 1;
+            position: relative;
+            width: 100%;
+            height: 250px; /* Fixed height for visuals */
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #fcfcfc;
         }}
         
         model-viewer {{ width: 100%; height: 100%; }}
-        img {{ max-width: 90%; max-height: 90%; object-fit: contain; transition: transform 0.2s; }}
+        img {{ max-width: 95%; max-height: 95%; object-fit: contain; }}
+        
+        .stats-overlay {{
+            padding: 10px;
+            background: #fff;
+            border-top: 1px solid #eee;
+            font-size: 0.85em;
+            color: #666;
+        }}
+
+        .stat-row {{
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 2px;
+        }}
+        .stat-label {{ color: #999; }}
+        .stat-val {{ font-weight: 500; color: #333; }}
+        .stat-val.good {{ color: #28a745; }}
+        .stat-val.bad {{ color: #dc3545; }}
         
         .missing-placeholder {{
             color: #ccc;
             font-style: italic;
-            font-size: 0.9em;
         }}
     </style>
 </head>
 <body>
     <h1>Objaverse vs LEGO Resolution Comparison</h1>
+    
+    <div class="comparison-grid" style="margin-bottom: 20px; border-radius: 8px; overflow: hidden; border: 1px solid #ddd;">
+        <div class="col-header">Original (GLB)</div>
+        { "".join(f'<div class="col-header">{c["display"]}</div>' for c in configs) }
+    </div>
     """
 
-    for uid, data in models_data.items():
+    for uid, data in models.items():
         glb_rel = os.path.relpath(data['glb'], SCRIPT_DIR)
+        short_uid = uid[:8]
         
         html_content += f"""
         <div class="model-section">
@@ -114,30 +149,61 @@ def generate_html(models_data, all_resolutions):
             <div class="comparison-grid">
                 <!-- 1. Original 3D Model -->
                 <div class="grid-item">
-                    <div class="label">Original (GLB)</div>
-                    <model-viewer 
-                        src="{glb_rel}" 
-                        auto-rotate camera-controls 
-                        shadow-intensity="1"
-                        interaction-prompt="none">
-                    </model-viewer>
+                    <div class="viewport">
+                        <model-viewer 
+                            src="{glb_rel}" 
+                            auto-rotate camera-controls 
+                            shadow-intensity="1"
+                            interaction-prompt="none">
+                        </model-viewer>
+                    </div>
+                    <div class="stats-overlay">
+                        <div class="stat-row">
+                            <span class="stat-label">UID</span>
+                            <span class="stat-val">{short_uid}</span>
+                        </div>
+                    </div>
                 </div>
         """
         
         # 2. Render Columns (Sorted)
-        for res in all_resolutions:
-            png_path = data['renders'].get(res)
+        for conf in configs:
+            cid = conf['id']
+            png_path = data['renders'].get(cid)
+            
+            # Get stats
+            stats = model_stats.get(short_uid, {}).get(cid, None)
             
             if png_path:
                 png_rel = os.path.relpath(png_path, SCRIPT_DIR)
-                content = f'<img src="{png_rel}" alt="Res {res}">'
+                visual = f'<img src="{png_rel}" alt="{conf["display"]}">'
             else:
-                content = '<span class="missing-placeholder">Not generated</span>'
+                visual = '<span class="missing-placeholder">No Render</span>'
                 
+            stats_html = ""
+            if stats:
+                is_disconnected = stats['components'] > stats['min_components']
+                conn_class = "bad" if is_disconnected else "good"
+                stab = stats['stability']
+                stab_class = "good" if stab < 0.35 else ("bad" if stab > 0.9 else "")
+                
+                stats_html = f"""
+                <div class="stat-row"><span class="stat-label">Time</span><span class="stat-val">{stats['time']:.2f}s</span></div>
+                <div class="stat-row"><span class="stat-label">Bricks</span><span class="stat-val">{stats['bricks']}</span></div>
+                <div class="stat-row"><span class="stat-label">Conn</span><span class="stat-val {conn_class}">{stats['components']}/{stats['min_components']}</span></div>
+                <div class="stat-row"><span class="stat-label">Stab</span><span class="stat-val {stab_class}">{stab:.3f}</span></div>
+                """
+            else:
+                stats_html = '<div class="stat-row" style="justify-content:center; color:#ccc;">No Data</div>'
+
             html_content += f"""
                 <div class="grid-item">
-                    <div class="label">Res {res}</div>
-                    {content}
+                    <div class="viewport">
+                        {visual}
+                    </div>
+                    <div class="stats-overlay">
+                        {stats_html}
+                    </div>
                 </div>
             """
             
@@ -157,69 +223,57 @@ def generate_html(models_data, all_resolutions):
     return html_content
 
 def main():
+    parser = argparse.ArgumentParser(description='Generate comparison gallery.')
+    parser.add_argument('--resolutions', nargs='+', type=int, default=None, help='Filter by specific resolutions (e.g., 20 50)')
+    args = parser.parse_args()
+
     if not ASSETS_DIR.exists():
         print(f"Error: assets directory not found at {ASSETS_DIR}")
         return
 
-    # Data Structure:
-    # models = { 'uid': { 'glb': path, 'renders': {20: path, 32: path} } }
-    models = {}
-    all_resolutions = set()
+    # 1. Get Metrics and Configs using update_metrics logic
+    print("Parsing logs...")
+    # Make sure we can import
+    try:
+        from update_metrics import parse_logs
+    except ImportError:
+        print("Error: Could not import parse_logs from update_metrics.py. Make sure you are running from the project root or objaverse directory.")
+        return
 
-    # 1. Find all available original GLB files in the root of assets/
-    #    (or wherever download_obj.py puts them)
-    #    We scan ASSETS_DIR for .glb
+    model_stats, configs = parse_logs(target_resolutions=args.resolutions)
+    
+    # 2. Build Models Dict (GLB + Renders)
+    # models = { 'uid': { 'glb': path, 'renders': {config_id: png_path} } }
+    models = {}
+    
+    # Find GLBs
     glb_files = list(ASSETS_DIR.glob("*.glb"))
     print(f"Found {len(glb_files)} source GLB files.")
-
     for glb in glb_files:
         uid = glb.stem
-        models[uid] = {
-            'glb': glb,
-            'renders': {}
-        }
+        models[uid] = {'glb': glb, 'renders': {}}
 
-    # 2. Scan all resolution subfolders
-    res_dirs = list(ASSETS_DIR.glob("res_*"))
-    for r_dir in res_dirs:
-        # Parse resolution from folder name
-        parts = r_dir.name.split("_")
-        if len(parts) < 2 or not parts[1].isdigit():
+    # Find Renders for each config
+    for conf in configs:
+        cid = conf['id']
+        conf_dir = ASSETS_DIR / cid
+        if not conf_dir.exists():
             continue
             
-        res = int(parts[1])
-        all_resolutions.add(res)
-        
-        # Find PNGs in this resolution folder
-        png_files = list(r_dir.glob("*.png"))
-        
+        png_files = list(conf_dir.glob("*.png"))
         for png in png_files:
             uid = png.stem
-            # If we don't know this UID from a GLB (e.g. GLB was deleted?), skip or add placeholder?
-            # Let's focused on mapped models first.
             if uid in models:
-                models[uid]['renders'][res] = png
-            else:
-                # Optional: Handle orphan renders if needed, but usually we care about the comparison
-                pass
+                models[uid]['renders'][cid] = png
 
-    sorted_res = sorted(list(all_resolutions))
-    print(f"Found resolutions: {sorted_res}")
-    
-    # Filter out models that have NO renders at all? 
-    # Or keep them to show they failed? 
-    # Let's keep them so you can see the original at least.
-
-    # Generate HTML
-    total_models = len(models)
-    print(f"Generating gallery for {total_models} models...")
+    # 3. Generate Gallery
+    print(f"Generating gallery for {len(models)} models across {len(configs)} configurations...")
+    html = generate_html(models, configs, model_stats)
     
     with open(HTML_OUTPUT, "w") as f:
-        f.write(generate_html(models, sorted_res))
+        f.write(html)
         
-    print("-" * 40)
-    print(f"Gallery refactored successfully!")
-    print(f"Open this file in your browser: {HTML_OUTPUT}")
+    print(f"Gallery generated: {HTML_OUTPUT}")
 
 if __name__ == "__main__":
     main()
