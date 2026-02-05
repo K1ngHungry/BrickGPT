@@ -5,7 +5,7 @@ import os
 import multiprocessing
 import shutil
 
-def download_objaverse_assets(csv_path: str, output_dir: str = "objaverse_assets"):
+def download_objaverse_assets(csv_path: str, output_dir: str = "assets"):
     """
     Downloads Objaverse assets specified in a CSV file.
     
@@ -43,9 +43,17 @@ def download_objaverse_assets(csv_path: str, output_dir: str = "objaverse_assets
         shutil.copy2(path, dest_path)
         print(f"Saved: {dest_path}")
 
+import argparse
+
 if __name__ == "__main__":
-    SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-    CSV_FILE = os.path.join(SCRIPT_DIR, "objaversepp_small.csv")
-    OUTPUT_DIRECTORY = os.path.join(SCRIPT_DIR, "assets")
+    parser = argparse.ArgumentParser(description="Download Objaverse assets from a CSV file.")
+    parser.add_argument("csv_path", help="Path to the CSV file containing UIDs")
+    parser.add_argument("output_dir", nargs="?", default="assets", help="Directory to save downloaded assets")
     
-    download_objaverse_assets(CSV_FILE, OUTPUT_DIRECTORY)
+    args = parser.parse_args()
+
+    # Resolve paths relative to current working directory or absolute paths
+    csv_file_path = os.path.abspath(args.csv_path)
+    output_directory = os.path.abspath(args.output_dir)
+    
+    download_objaverse_assets(csv_file_path, output_directory)
