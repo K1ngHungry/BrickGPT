@@ -7,13 +7,14 @@ from collections import defaultdict
 ASSETS_DIR = 'objaverse/assets'
 HTML_OUTPUT_PATH = 'objaverse/comparison_metrics.html'
 
-# Regex for logs
-LOG_PATTERN = re.compile(r"Converting ([a-f0-9]+)\.glb.*?"
-                         r"Finished in time: ([\d\.]+) s \| "
-                         r"# bricks: (\d+) \| "
-                         r"# connected components: (\d+) \| "
-                         r"# min connected components possible: (\d+) \| "
-                         r"Stability: ([\d\.]+)", re.DOTALL)
+# Regex patterns for line-by-line parsing
+CONVERTING_PATTERN = re.compile(r"Converting ([a-f0-9]+)\.glb")
+SKIPPED_PATTERN = re.compile(r"SKIPPED ([a-f0-9]+)\.glb")
+FINISHED_PATTERN = re.compile(r"Finished in time: ([\d\.]+) s \| "
+                              r"# bricks: (\d+) \| "
+                              r"# connected components: (\d+) \| "
+                              r"# min connected components possible: (\d+) \| "
+                              r"Stability: ([\d\.]+)")
 
 import argparse
 
@@ -73,21 +74,38 @@ def parse_logs(target_resolutions=None):
         all_configs.add(config_obj['id'])
         
         with open(log_path, 'r') as f:
-            content = f.read()
+            lines = f.readlines()
         
-        matches = LOG_PATTERN.findall(content)
-        for m in matches:
-            uid, time, bricks, comps, min_comps, stability = m
-            short_uid = uid[:8]
+        # Line-by-line parsing with state tracking
+        current_uid = None
+        for line in lines:
+            # Check for new conversion start
+            conv_match = CONVERTING_PATTERN.search(line)
+            if conv_match:
+                current_uid = conv_match.group(1)
+                continue
             
-            model_data[short_uid][config_obj['id']] = {
-                'time': float(time),
-                'bricks': int(bricks),
-                'components': int(comps),
-                'min_components': int(min_comps),
-                'stability': float(stability),
-                'config': config_obj
-            }
+            # Check if current model was skipped - reset state
+            skip_match = SKIPPED_PATTERN.search(line)
+            if skip_match:
+                current_uid = None
+                continue
+            
+            # Check for finished line - only process if we have a valid current_uid
+            fin_match = FINISHED_PATTERN.search(line)
+            if fin_match and current_uid:
+                time_val, bricks, comps, min_comps, stability = fin_match.groups()
+                short_uid = current_uid[:8]
+                
+                model_data[short_uid][config_obj['id']] = {
+                    'time': float(time_val),
+                    'bricks': int(bricks),
+                    'components': int(comps),
+                    'min_components': int(min_comps),
+                    'stability': float(stability),
+                    'config': config_obj
+                }
+                current_uid = None  # Reset after successful match
 
     # Sort configs list
     # Reconstruct objects from one of the models or just re-parse dir names? 
