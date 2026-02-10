@@ -56,10 +56,12 @@ def parse_logs(target_resolutions=None):
         # Determine internal sort key and display name
         # We want to sort by Resolution, then by Variant order (Default < Plates < HeightPriority < Volume < Others)
         variant_rank = {
-            'Baseline': 1,
-            'Plates': 2, 
+            'Baseline': 0,
+            'Plates': 1,
+            'Volume': 2,
             'Height': 3,
-            'Volume': 4
+            'Twopass': 4,
+            'Alignment': 5
         }.get(variant, 99)
         
         config_obj = {
@@ -117,10 +119,11 @@ def parse_logs(target_resolutions=None):
         variant = ' '.join([p.capitalize() for p in parts[2:]])
         variant_rank = {
             'Baseline': 0,
-            'Default': 1,
-            'Plates': 2, 
-            'Heightpriority': 3,
-            'Volume': 4
+            'Plates': 1,
+            'Volume': 2,
+            'Height': 3,
+            'Twopass': 4,
+            'Alignment': 5
         }.get(variant, 99)
         
         sorted_configs.append({
@@ -225,6 +228,8 @@ def generate_html(model_data, sorted_configs):
                 <th>Total Time (s)</th>
                 <th>Total Bricks</th>
                 <th>Avg Stability</th>
+                <th>Avg Stability (Stable Only)</th>
+                <th>Unstable Models</th>
                 <th>Disconnected Models</th>
             </tr>
         </thead>
@@ -237,34 +242,45 @@ def generate_html(model_data, sorted_configs):
         total_time = 0
         total_bricks = 0
         total_stability = 0
+        stable_only_stability = 0
         disconnected = 0
+        unstable = 0
+        stable_count = 0
         count = 0
-        
-        # Only count models where this config ran
-        # But for fair comparison, usually we want intersection? 
-        # For now, just sum whatever ran.
-        
+
         for uid, runs in model_data.items():
             if cid in runs:
                 d = runs[cid]
                 total_time += d['time']
                 total_bricks += d['bricks']
                 total_stability += d['stability']
+                if d['stability'] >= 1.0:
+                    unstable += 1
+                else:
+                    stable_only_stability += d['stability']
+                    stable_count += 1
                 if d['components'] > d['min_components']:
                     disconnected += 1
                 count += 1
-        
+
         if count > 0:
             avg_stability = total_stability / count
-            
+            avg_stable_only = stable_only_stability / stable_count if stable_count > 0 else float('nan')
+
             stab_class = ' class="good"' if avg_stability < 0.35 else ''
+            stab_stable_class = ' class="good"' if stable_count > 0 and avg_stable_only < 0.35 else ''
+            unstable_class = ' class="good"' if unstable == 0 else ' class="highlight"'
             disc_class = ' class="good"' if disconnected == 0 else ' class="highlight"'
-            
+
+            avg_stable_only_str = f"{avg_stable_only:.3f}" if stable_count > 0 else "N/A"
+
             html += f"            <tr>"
             html += f"<td>{conf['display']}</td>"
             html += f"<td>{total_time:.2f}</td>"
             html += f"<td>{total_bricks}</td>"
             html += f"<td{stab_class}>{avg_stability:.3f}</td>"
+            html += f"<td{stab_stable_class}>{avg_stable_only_str}</td>"
+            html += f"<td{unstable_class}>{unstable} / {count}</td>"
             html += f"<td{disc_class}>{disconnected} / {count}</td>"
             html += "</tr>\n"
 
