@@ -6,7 +6,6 @@ from multiprocessing import Process, Queue
 SCRIPT_DIR = Path(__file__).parent
 OBJAVERSE_DIR = SCRIPT_DIR / "assets"
 
-TIMEOUT_SECONDS = 600  # 10 minutes
 
 def process_single_file(file_path: Path, resolution: int, res_dir: Path, result_queue: Queue):
     """
@@ -83,6 +82,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Convert Objaverse assets to LEGO bricks.")
     parser.add_argument("--resolution", type=int, default=20, help="Voxel resolution (world_dim)")
     parser.add_argument("--output_dir", type=str, default=None, help="Directory to save output files")
+    parser.add_argument("--timeout", type=int, default=None, help="Timeout in seconds per file (default: no timeout)")
     args = parser.parse_args()
-    
-    convert_objaverse_assets(args.resolution, args.output_dir)
+
+    convert_objaverse_assets(args.resolution, args.output_dir, args.timeout)
