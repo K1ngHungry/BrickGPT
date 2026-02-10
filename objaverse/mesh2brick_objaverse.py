@@ -34,7 +34,7 @@ def process_single_file(file_path: Path, resolution: int, res_dir: Path, result_
     except Exception as e:
         result_queue.put(("FAILED", file_path.name, str(e)))
 
-def convert_objaverse_assets(resolution: int, output_dir: str = None):
+def convert_objaverse_assets(resolution: int, output_dir: str = None, timeout: int = None):
     if not OBJAVERSE_DIR.exists():
         print(f"Directory not found: {OBJAVERSE_DIR}")
         return
@@ -60,13 +60,13 @@ def convert_objaverse_assets(resolution: int, output_dir: str = None):
         result_queue = Queue()
         p = Process(target=process_single_file, args=(file_path, resolution, res_dir, result_queue))
         p.start()
-        p.join(timeout=TIMEOUT_SECONDS)
-        
+        p.join(timeout=timeout)
+
         if p.is_alive():
             # Process is still running after timeout - kill it
             p.terminate()
             p.join()  # Wait for it to actually terminate
-            print(f"SKIPPED {filename}: Timed out after {TIMEOUT_SECONDS // 60} minutes")
+            print(f"SKIPPED {filename}: Timed out after {timeout // 60} minutes")
         else:
             # Process finished - check the result
             if not result_queue.empty():
