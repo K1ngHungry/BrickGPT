@@ -281,12 +281,16 @@ def generate_html(model_data, sorted_configs):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Generate comparison metrics HTML.')
     parser.add_argument('--resolutions', nargs='+', type=int, default=None, help='Filter by specific resolutions (e.g., 20 50)')
+    parser.add_argument('-o', '--output', type=str, default=None, help='Output HTML file path. Defaults to objaverse/comparison_metrics.html')
     args = parser.parse_args()
+
+    output_path = args.output if args.output else HTML_OUTPUT_PATH
 
     data, configs = parse_logs(target_resolutions=args.resolutions)
     html_content = generate_html(data, configs)
-    
-    with open(HTML_OUTPUT_PATH, 'w') as f:
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    with open(output_path, 'w') as f:
         f.write(html_content)
-    
-    print(f"Successfully generated {HTML_OUTPUT_PATH} from {len(configs)} configurations.")
+
+    print(f"Successfully generated {output_path} from {len(configs)} configurations.")
