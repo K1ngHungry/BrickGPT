@@ -225,10 +225,9 @@ def generate_html(model_data, sorted_configs):
         <thead>
             <tr>
                 <th>Configuration</th>
-                <th>Total Time (s)</th>
-                <th>Total Bricks</th>
+                <th>Avg Time (s)</th>
+                <th>Avg Bricks</th>
                 <th>Avg Stability</th>
-                <th>Avg Stability (Stable Only)</th>
                 <th>Unstable Models</th>
                 <th>Disconnected Models</th>
             </tr>
@@ -236,11 +235,14 @@ def generate_html(model_data, sorted_configs):
         <tbody>
 """
 
-    # Summary Table
+    # Collect per-config stats for both tables
+    config_stats = []
     for conf in sorted_configs:
         cid = conf['id']
         total_time = 0
+        stable_only_time = 0
         total_bricks = 0
+        stable_only_bricks = 0
         total_stability = 0
         stable_only_stability = 0
         disconnected = 0
@@ -257,36 +259,79 @@ def generate_html(model_data, sorted_configs):
                 if d['stability'] >= 1.0:
                     unstable += 1
                 else:
+                    stable_only_time += d['time']
+                    stable_only_bricks += d['bricks']
                     stable_only_stability += d['stability']
                     stable_count += 1
                 if d['components'] > d['min_components']:
                     disconnected += 1
                 count += 1
 
-        if count > 0:
-            avg_stability = total_stability / count
-            avg_stable_only = stable_only_stability / stable_count if stable_count > 0 else float('nan')
+        config_stats.append({
+            'conf': conf, 'count': count, 'total_time': total_time,
+            'total_bricks': total_bricks, 'stable_only_bricks': stable_only_bricks,
+            'total_stability': total_stability,
+            'stable_only_time': stable_only_time, 'stable_only_stability': stable_only_stability,
+            'stable_count': stable_count, 'unstable': unstable, 'disconnected': disconnected
+        })
+
+    # Summary Table (all models)
+    for s in config_stats:
+        if s['count'] > 0:
+            avg_time = s['total_time'] / s['count']
+            avg_stability = s['total_stability'] / s['count']
 
             stab_class = ' class="good"' if avg_stability < 0.35 else ''
-            stab_stable_class = ' class="good"' if stable_count > 0 and avg_stable_only < 0.35 else ''
-            unstable_class = ' class="good"' if unstable == 0 else ' class="highlight"'
-            disc_class = ' class="good"' if disconnected == 0 else ' class="highlight"'
-
-            avg_stable_only_str = f"{avg_stable_only:.3f}" if stable_count > 0 else "N/A"
+            unstable_class = ' class="good"' if s['unstable'] == 0 else ' class="highlight"'
+            disc_class = ' class="good"' if s['disconnected'] == 0 else ' class="highlight"'
 
             html += f"            <tr>"
-            html += f"<td>{conf['display']}</td>"
-            html += f"<td>{total_time:.2f}</td>"
-            html += f"<td>{total_bricks}</td>"
+            html += f"<td>{s['conf']['display']}</td>"
+            avg_bricks = s['total_bricks'] / s['count']
+            html += f"<td>{avg_time:.2f}</td>"
+            html += f"<td>{avg_bricks:.0f}</td>"
             html += f"<td{stab_class}>{avg_stability:.3f}</td>"
-            html += f"<td{stab_stable_class}>{avg_stable_only_str}</td>"
-            html += f"<td{unstable_class}>{unstable} / {count}</td>"
-            html += f"<td{disc_class}>{disconnected} / {count}</td>"
+            html += f"<td{unstable_class}>{s['unstable']} / {s['count']}</td>"
+            html += f"<td{disc_class}>{s['disconnected']} / {s['count']}</td>"
             html += "</tr>\n"
 
     html += """        </tbody>
     </table>
-    
+
+    <h2>Aggregated Totals (Stable &amp; Connected Only)</h2>
+    <table class="summary-table">
+        <thead>
+            <tr>
+                <th>Configuration</th>
+                <th>Avg Time (s)</th>
+                <th>Avg Bricks</th>
+                <th>Avg Stability</th>
+                <th>Models Included</th>
+            </tr>
+        </thead>
+        <tbody>
+"""
+
+    # Stable & connected only table
+    for s in config_stats:
+        if s['stable_count'] > 0:
+            avg_time = s['stable_only_time'] / s['stable_count']
+            avg_stability = s['stable_only_stability'] / s['stable_count']
+
+            stab_class = ' class="good"' if avg_stability < 0.35 else ''
+
+            html += f"            <tr>"
+            html += f"<td>{s['conf']['display']}</td>"
+            avg_bricks = s['stable_only_bricks'] / s['stable_count']
+            html += f"<td>{avg_time:.2f}</td>"
+            html += f"<td>{avg_bricks:.0f}</td>"
+            html += f"<td{stab_class}>{avg_stability:.3f}</td>"
+            html += f"<td>{s['stable_count']} / {s['count']}</td>"
+            html += "</tr>\n"
+
+    html += """        </tbody>
+    </table>
+
     <p><em>Note: Stability values of 1.0 indicate instability/disconnection. Lower stability score is better rigidity.</em></p>
 
 </body>
