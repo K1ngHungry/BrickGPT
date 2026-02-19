@@ -10,11 +10,10 @@ sys.path.append(str(SCRIPT_DIR))
 try:
     from update_metrics import parse_logs
 except ImportError:
-    # Fallback if running from root without package structure
     pass
 
 ASSETS_DIR = SCRIPT_DIR / "assets"
-HTML_OUTPUT = SCRIPT_DIR / "gallery.html"
+RESULTS_DIR = SCRIPT_DIR / "results"
 
 def generate_html(models, configs, model_stats, output_dir):
     """
@@ -248,13 +247,13 @@ def main():
     parser.add_argument('-o', '--output', type=str, default=None, help='Output HTML file path. Defaults to gallery.html in script directory.')
     args = parser.parse_args()
 
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     if args.output:
         output_path = Path(args.output).resolve()
     else:
-        output_path = SCRIPT_DIR / "gallery.html"
-    
+        output_path = RESULTS_DIR / "gallery.html"
+
     output_dir = output_path.parent
-    output_dir.mkdir(parents=True, exist_ok=True)
 
     if not ASSETS_DIR.exists():
         print(f"Error: assets directory not found at {ASSETS_DIR}")

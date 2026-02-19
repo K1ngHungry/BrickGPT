@@ -3,9 +3,11 @@ import os
 import glob
 from collections import defaultdict
 
-# Paths
-ASSETS_DIR = 'objaverse/assets'
-HTML_OUTPUT_PATH = 'objaverse/comparison_metrics.html'
+from pathlib import Path
+
+SCRIPT_DIR = Path(__file__).parent
+ASSETS_DIR = str(SCRIPT_DIR / 'assets')
+RESULTS_DIR = SCRIPT_DIR / 'results'
 
 # Regex patterns for line-by-line parsing
 CONVERTING_PATTERN = re.compile(r"Converting ([a-f0-9]+)\.glb")
@@ -345,7 +347,8 @@ if __name__ == "__main__":
     parser.add_argument('-o', '--output', type=str, default=None, help='Output HTML file path. Defaults to objaverse/comparison_metrics.html')
     args = parser.parse_args()
 
-    output_path = args.output if args.output else HTML_OUTPUT_PATH
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    output_path = args.output if args.output else str(RESULTS_DIR / 'comparison_metrics.html')
 
     data, configs = parse_logs(target_resolutions=args.resolutions)
     html_content = generate_html(data, configs)

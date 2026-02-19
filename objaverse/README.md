@@ -1,52 +1,58 @@
-# Objaverse & Mesh2Brick Evaluation Tools
+# Objaverse Evaluation
 
-This folder contains scripts to download 3D models from Objaverse, convert them into LEGO brick structures using `mesh2brick`, and visualize the results in a comparison gallery.
+Scripts to download 3D models from Objaverse, convert them into LEGO brick structures using `mesh2brick`, and visualize the results.
 
-## Pipeline Workflow
+## Pipeline
 
 ### 1. Download Assets
 
-Downloads a subset of Objaverse models specified in the CSV file.
+```bash
+uv run python objaverse/download_obj.py
+```
 
-- **Script:** `download_obj.py`
-- **Input:** `objaversepp_small.csv`
-- **Output:** Saves `.glb` files to `assets/`.
-- **Usage:**
-  ```bash
-  uv run objaverse/download_obj.py
-  ```
+Downloads models from `objaversepp_small.csv` into `assets/`.
 
 ### 2. Convert to Bricks
 
-Converts all `.glb` files in the `assets/` folder into LEGO structures.
+```bash
+uv run python objaverse/mesh2brick_objaverse.py --resolution 20 --timeout 600
+```
 
-- **Script:** `mesh2brick_objaverse.py`
-- **Output:** Generates `.txt` (brick list) and `.ldr` (LDraw) files in `assets/res_<resolution>/` (default) or the specified output directory.
-- **Usage:**
+Converts all `.glb` files in `assets/` to `.txt` and `.ldr` files in `assets/res_<resolution>/`.
 
-  ```bash
-  # Default (Resolution 20, Output to assets/res_20)
-  uv run objaverse/mesh2brick_objaverse.py
+### 3. Render
 
-  # Custom Resolution and Output Directory
-  uv run objaverse/mesh2brick_objaverse.py --resolution 20 --output_dir path/to/output
-  ```
+```bash
+uv run python objaverse/render_objaverse.py
+```
 
-### 3. Generate Gallery
+Renders all `.ldr` files in `assets/` to `.png`. Use `--force` to re-render existing images.
 
-Renders the LEGO models and creates an HTML page to compare the original 3D model vs. the LEGO conversion side-by-side.
+### 4. Metrics
 
-- **Script:** `generate_gallery.py`
-- **Output:**
-  - Renders `.png` images in `assets/`.
-  - Generates `gallery.html`.
-- **Usage:**
-  ```bash
-  uv run objaverse/generate_gallery.py
-  ```
+```bash
+uv run python objaverse/update_metrics.py
+```
+
+Generates `results/comparison_metrics.html` from logs in `assets/res_*/logs.txt`.
+
+### 5. Gallery
+
+```bash
+uv run python objaverse/generate_gallery.py
+```
+
+Generates `results/gallery.html` comparing original models with LEGO conversions.
 
 ## Directory Structure
 
-- `assets/`: Stores source models (`.glb`).
-- `assets/res_<N>/`: Stores generated results (`.ldr`, `.txt`, `.png`) for resolution N.
-- `objaversepp_small.csv`: List of Objaverse UIDs to process (downloaded from Objaverse++).
+```
+objaverse/
+├── assets/              # Source .glb models + res_* output dirs
+├── results/             # gallery.html, comparison_metrics.html
+├── mesh2brick_objaverse.py
+├── render_objaverse.py
+├── update_metrics.py
+├── generate_gallery.py
+└── download_obj.py
+```
