@@ -24,7 +24,13 @@ import numpy as np
 import open3d as o3d
 
 from mesh2brick.mesh2brick import normalize_mesh
-from mesh2brick.slope_detection import detect_slopes, slope_to_bricks, get_slope_bricks
+from mesh2brick.slope_detection import (
+    compute_optimal_scale,
+    detect_slopes,
+    get_slope_bricks,
+    match_slope_to_bricks,
+    _compute_s_min,
+)
 
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
@@ -83,16 +89,32 @@ def process_mesh(
     )
     slope_bricks = get_slope_bricks()
 
+    # Compute optimal scale
+    optimal_scale, assignments = compute_optimal_scale(
+        regions, default_scale=20.0, max_scale=50.0,
+    )
+    assigned_regions = {id(region) for region, _ in assignments}
+
     region_info = []
     for region in regions:
-        matches = slope_to_bricks(region.slope_angle, slope_bricks)
+        matches = match_slope_to_bricks(region.slope_angle, slope_bricks)
         best = matches[0] if matches else None
+        s_min = _compute_s_min(region, slope_bricks)
+        is_assigned = id(region) in assigned_regions
+        studs_l = region.length * optimal_scale if s_min else 0
+        studs_w = region.width * optimal_scale if s_min else 0
         region_info.append({
             "faces": len(region.face_indices),
             "area": region.area,
             "angle": region.slope_angle,
             "direction": region.slope_direction,
+            "length": region.length,
+            "width": region.width,
             "best_brick": best,
+            "s_min": s_min,
+            "assigned": is_assigned,
+            "studs_l": studs_l,
+            "studs_w": studs_w,
         })
 
     # Color the mesh by slope regions
@@ -130,6 +152,8 @@ def process_mesh(
         "n_vert": n_vert,
         "n_sloped": n_sloped,
         "n_regions": len(regions),
+        "n_assigned": sum(1 for r in region_info if r.get("assigned")),
+        "optimal_scale": optimal_scale,
         "regions": region_info,
     }
 
@@ -164,17 +188,25 @@ def generate_html(results: list[dict], output_path: Path, params: dict):
                 brick_str = (f"ID {b['brick_id']} "
                              f"({b['length']}&times;{b['width']}&times;{b['height']}, "
                              f"{b['angle']:.1f}&deg;)")
+            s_min_str = f"{reg['s_min']:.1f}" if reg.get("s_min") else "&mdash;"
+            status_cls = "assigned" if reg.get("assigned") else "discarded"
+            status_str = "&#10003;" if reg.get("assigned") else "&#10007; fallback"
+            studs_str = (f"{reg['studs_l']:.1f}&times;{reg['studs_w']:.1f}"
+                         if reg.get("s_min") else "&mdash;")
             region_rows += f"""
-                <tr>
+                <tr class="{status_cls}">
                     <td>{i+1}</td>
                     <td>{reg['faces']}</td>
                     <td>{reg['angle']:.1f}&deg;</td>
                     <td><span class="dir-badge" style="background:{dir_color}">{dir_name}</span></td>
                     <td>{brick_str}</td>
+                    <td>{s_min_str}</td>
+                    <td>{studs_str}</td>
+                    <td class="status-{status_cls}">{status_str}</td>
                 </tr>"""
 
         if not r["regions"]:
-            region_rows = '<tr><td colspan="5" class="empty">No slope regions detected</td></tr>'
+            region_rows = '<tr><td colspan="8" class="empty">No slope regions detected</td></tr>'
 
         src_url = f"{rel_mesh_dir}/{r['glb_filename']}" if mesh_dir else r['glb_filename']
 
@@ -184,7 +216,7 @@ def generate_html(results: list[dict], output_path: Path, params: dict):
                 <h2>{r['short_name']}</h2>
                 <span class="face-stats">{r['n_faces']} faces &mdash;
                     H:{r['n_horiz']} V:{r['n_vert']} S:{r['n_sloped']}</span>
-                <span class="region-count">{r['n_regions']} slope(s)</span>
+                <span class="region-count">{r['n_regions']} slope(s), scale={r.get('optimal_scale', 20):.0f}</span>
             </div>
             <div class="card-body">
                 <div class="viewer-container">
@@ -202,7 +234,7 @@ def generate_html(results: list[dict], output_path: Path, params: dict):
                     <h3>Slope Regions</h3>
                     <table>
                         <thead>
-                            <tr><th>#</th><th>Faces</th><th>Angle</th><th>Dir</th><th>Best Brick</th></tr>
+                            <tr><th>#</th><th>Faces</th><th>Angle</th><th>Dir</th><th>Best Brick</th><th>s_min</th><th>Studs</th><th>Status</th></tr>
                         </thead>
                         <tbody>{region_rows}</tbody>
                     </table>
@@ -251,6 +283,9 @@ def generate_html(results: list[dict], output_path: Path, params: dict):
     .dir-badge {{ display: inline-block; padding: 2px 8px; border-radius: 3px; color: white;
                   font-size: 0.85em; font-weight: 600; }}
     .uid-full {{ font-size: 0.75em; color: #999; margin-top: 12px; word-break: break-all; }}
+    tr.discarded {{ opacity: 0.5; }}
+    .status-assigned {{ color: #27ae60; font-weight: 600; }}
+    .status-discarded {{ color: #c0392b; font-size: 0.85em; }}
     @media (max-width: 700px) {{
         .card-body {{ flex-direction: column; }}
         .viewer-container {{ flex: none; height: 300px; }}
@@ -321,7 +356,10 @@ def main():
             glb_output_dir=mesh_output_dir,
         )
         n_regions = result.get("n_regions", 0)
-        print(f"{result.get('n_faces', 0)} faces, {n_regions} regions")
+        scale = result.get("optimal_scale", 20)
+        n_assigned = result.get("n_assigned", 0)
+        print(f"{result.get('n_faces', 0)} faces, {n_regions} regions "
+              f"({n_assigned} assigned), scale={scale:.0f}")
         results.append(result)
 
     generate_html(results, output_path, {
