@@ -3,42 +3,29 @@ import sys
 import argparse
 from pathlib import Path
 
-# Enhance sys.path to allow importing from the same directory
 SCRIPT_DIR = Path(__file__).parent.resolve()
-sys.path.append(str(SCRIPT_DIR))
-
-try:
-    from update_metrics import parse_logs
-except ImportError:
-    pass
-
 ASSETS_DIR = SCRIPT_DIR / "assets"
 RESULTS_DIR = SCRIPT_DIR / "results"
 
+sys.path.append(str(SCRIPT_DIR))
+from update_metrics import parse_logs
+
+
 def generate_html(models, configs, model_stats, output_dir):
-    """
-    Generates the HTML gallery.
-    models: { 'uid': {'glb': path, 'renders': {config_id: png_path}} }
-    configs: List of config dicts from parse_logs [{'id': 'res_20_plates', 'display': '...', ...}]
-    model_stats: Dict of stats from parse_logs {short_uid: {config_id: {time, bricks, ...}}}
-    output_dir: Path object for the directory where HTML is saved (for relative paths)
-    """
-    
     col_count = 1 + len(configs)
-    
+
     html_content = f"""
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>BrickGPT: Comparison Gallery</title>
-    <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.4.0/model-viewer.min.js"></script>
+    <title>ShapeNet: Comparison Gallery</title>
     <style>
         body {{ font-family: 'Segoe UI', system-ui, sans-serif; background: #f0f2f5; padding: 20px; color: #333; }}
         h1 {{ text-align: center; margin-bottom: 40px; color: #1a1a1a; }}
-        
-        .model-section {{ 
+
+        .model-section {{
             background: white;
             border-radius: 16px;
             box-shadow: 0 4px 20px rgba(0,0,0,0.06);
@@ -47,7 +34,7 @@ def generate_html(models, configs, model_stats, output_dir):
             padding: 0;
             border: 1px solid #e0e0e0;
         }}
-        
+
         .model-header {{
             background: #2c3e50;
             color: white;
@@ -60,13 +47,13 @@ def generate_html(models, configs, model_stats, output_dir):
             top: 0;
             z-index: 100;
         }}
-        
+
         .comparison-grid {{
             display: grid;
             grid-template-columns: repeat({col_count}, 1fr);
             gap: 0;
         }}
-        
+
         .grid-item {{
             border-right: 1px solid #eee;
             position: relative;
@@ -76,7 +63,7 @@ def generate_html(models, configs, model_stats, output_dir):
             overflow: hidden;
             min-height: 300px;
         }}
-        
+
         .grid-item:last-child {{ border-right: none; }}
 
         .col-header {{
@@ -88,21 +75,20 @@ def generate_html(models, configs, model_stats, output_dir):
             font-size: 0.9em;
             color: #555;
         }}
-        
+
         .viewport {{
             flex-grow: 1;
             position: relative;
             width: 100%;
-            height: 250px; /* Fixed height for visuals */
+            height: 250px;
             display: flex;
             align-items: center;
             justify-content: center;
             background: #fcfcfc;
         }}
-        
-        model-viewer {{ width: 100%; height: 100%; }}
+
         img {{ max-width: 95%; max-height: 95%; object-fit: contain; }}
-        
+
         .stats-overlay {{
             padding: 10px;
             background: #fff;
@@ -120,7 +106,7 @@ def generate_html(models, configs, model_stats, output_dir):
         .stat-val {{ font-weight: 500; color: #333; }}
         .stat-val.good {{ color: #28a745; }}
         .stat-val.bad {{ color: #dc3545; }}
-        
+
         .missing-placeholder {{
             color: #ccc;
             font-style: italic;
@@ -139,33 +125,34 @@ def generate_html(models, configs, model_stats, output_dir):
 </head>
 <body>
     <div class="lightbox" onclick="this.classList.remove('active')"><img id="lightbox-img" src="" alt=""></div>
-    <h1>Objaverse vs LEGO Resolution Comparison</h1>
-    
+    <h1>ShapeNet LEGO Comparison Gallery</h1>
+
     <div class="comparison-grid" style="margin-bottom: 20px; border-radius: 8px; overflow: hidden; border: 1px solid #ddd;">
-        <div class="col-header">Original (GLB)</div>
+        <div class="col-header">Original (StableLego)</div>
         { "".join(f'<div class="col-header">{c["display"]}</div>' for c in configs) }
     </div>
     """
 
     for uid, data in models.items():
-        glb_rel = os.path.relpath(data['glb'], output_dir)
         short_uid = uid[:8]
-        
+
+        # Original image
+        vis_path = data.get('vis')
+        if vis_path:
+            vis_rel = os.path.relpath(vis_path, output_dir)
+            orig_visual = f'<img src="{vis_rel}" alt="Original">'
+        else:
+            orig_visual = '<span class="missing-placeholder">No Image</span>'
+
         html_content += f"""
         <div class="model-section">
             <div class="model-header">
                 <span>Model: {uid}</span>
             </div>
             <div class="comparison-grid">
-                <!-- 1. Original 3D Model -->
                 <div class="grid-item">
                     <div class="viewport">
-                        <model-viewer 
-                            src="{glb_rel}" 
-                            auto-rotate camera-controls 
-                            shadow-intensity="1"
-                            interaction-prompt="none">
-                        </model-viewer>
+                        {orig_visual}
                     </div>
                     <div class="stats-overlay">
                         <div class="stat-row">
@@ -175,28 +162,26 @@ def generate_html(models, configs, model_stats, output_dir):
                     </div>
                 </div>
         """
-        
-        # 2. Render Columns (Sorted)
+
         for conf in configs:
             cid = conf['id']
-            png_path = data['renders'].get(cid)
-            
-            # Get stats
             stats = model_stats.get(short_uid, {}).get(cid, None)
-            
+
+            # Check for render PNG in config dir
+            png_path = data['renders'].get(cid)
             if png_path:
                 png_rel = os.path.relpath(png_path, output_dir)
                 visual = f'<img src="{png_rel}" alt="{conf["display"]}">'
             else:
                 visual = '<span class="missing-placeholder">No Render</span>'
-                
+
             stats_html = ""
             if stats:
                 is_disconnected = stats['components'] > stats['min_components']
                 conn_class = "bad" if is_disconnected else "good"
                 stab = stats['stability']
                 stab_class = "good" if stab < 0.35 else ("bad" if stab > 0.9 else "")
-                
+
                 stats_html = f"""
                 <div class="stat-row"><span class="stat-label">Time</span><span class="stat-val">{stats['time']:.2f}s</span></div>
                 <div class="stat-row"><span class="stat-label">Bricks</span><span class="stat-val">{stats['bricks']}</span></div>
@@ -216,7 +201,7 @@ def generate_html(models, configs, model_stats, output_dir):
                     </div>
                 </div>
             """
-            
+
         html_content += """
             </div>
         </div>
@@ -238,14 +223,18 @@ def generate_html(models, configs, model_stats, output_dir):
 </body>
 </html>
     """
-    
+
     return html_content
 
+
 def main():
-    parser = argparse.ArgumentParser(description='Generate comparison gallery.')
-    parser.add_argument('--resolutions', nargs='+', type=int, default=None, help='Filter by specific resolutions (e.g., 20 50)')
-    parser.add_argument('-o', '--output', type=str, default=None, help='Output HTML file path. Defaults to gallery.html in script directory.')
+    parser = argparse.ArgumentParser(description='Generate ShapeNet comparison gallery.')
+    parser.add_argument('category', type=str, help='ShapeNet category ID (e.g. 02691156)')
+    parser.add_argument('--resolutions', nargs='+', type=int, default=None, help='Filter by specific resolutions')
+    parser.add_argument('-o', '--output', type=str, default=None, help='Output HTML file path')
     args = parser.parse_args()
+
+    input_path = ASSETS_DIR / args.category
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     if args.output:
@@ -255,54 +244,39 @@ def main():
 
     output_dir = output_path.parent
 
-    if not ASSETS_DIR.exists():
-        print(f"Error: assets directory not found at {ASSETS_DIR}")
-        return
+    # Parse logs
+    model_stats, configs = parse_logs(str(input_path), target_resolutions=args.resolutions)
 
-    # 1. Get Metrics and Configs using update_metrics logic
-    print("Parsing logs...")
-    # Make sure we can import
-    try:
-        from update_metrics import parse_logs
-    except ImportError:
-        print("Error: Could not import parse_logs from update_metrics.py. Make sure you are running from the project root or objaverse directory.")
-        return
-
-    model_stats, configs = parse_logs(target_resolutions=args.resolutions)
-    
-    # 2. Build Models Dict (GLB + Renders)
-    # models = { 'uid': { 'glb': path, 'renders': {config_id: png_path} } }
+    # Build models dict
     models = {}
-    
-    # Find GLBs
-    glb_files = list(ASSETS_DIR.glob("*.glb"))
-    print(f"Found {len(glb_files)} source GLB files.")
-    for glb in glb_files:
-        uid = glb.stem
-        models[uid] = {'glb': glb, 'renders': {}}
+    for model_dir in sorted(input_path.iterdir()):
+        if not model_dir.is_dir() or model_dir.name.startswith('res_'):
+            continue
+        uid = model_dir.name
+        vis = model_dir / "models" / "vis.png"
+        if not vis.exists():
+            vis = None
+        models[uid] = {'vis': vis, 'renders': {}}
 
-    # Find Renders for each config
+    # Find render PNGs in config dirs
     for conf in configs:
         cid = conf['id']
-        conf_dir = ASSETS_DIR / cid
+        conf_dir = input_path / cid
         if not conf_dir.exists():
             continue
-            
-        png_files = list(conf_dir.glob("*.png"))
-        for png in png_files:
+        for png in conf_dir.glob("*.png"):
             uid = png.stem
             if uid in models:
                 models[uid]['renders'][cid] = png
 
-    # 3. Generate Gallery
     print(f"Generating gallery for {len(models)} models across {len(configs)} configurations...")
     html = generate_html(models, configs, model_stats, output_dir)
-    
+
     with open(output_path, "w") as f:
         f.write(html)
-        
+
     print(f"Gallery generated: {output_path}")
+
 
 if __name__ == "__main__":
     main()
-

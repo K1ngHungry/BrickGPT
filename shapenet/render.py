@@ -7,14 +7,15 @@ SCRIPT_DIR = Path(__file__).parent.resolve()
 ASSETS_DIR = SCRIPT_DIR / "assets"
 
 
-def render_assets(force_all=False):
-    if not ASSETS_DIR.exists():
-        print(f"Error: directory not found at {ASSETS_DIR}")
+def render_assets(category, force_all=False):
+    target_dir = ASSETS_DIR / category
+    if not target_dir.exists():
+        print(f"Error: directory not found at {target_dir}")
         return
 
     # Find all .ldr files in res_* directories
-    ldr_files = sorted(list(ASSETS_DIR.rglob("res_*/*.ldr")))
-    print(f"Found {len(ldr_files)} LDR files in {ASSETS_DIR} to check for rendering.")
+    ldr_files = sorted(list(target_dir.rglob("res_*/*.ldr")))
+    print(f"Found {len(ldr_files)} LDR files in {target_dir} to check for rendering.")
 
     # Prepare environment with local ldraw library
     env = os.environ.copy()
@@ -53,8 +54,9 @@ def render_assets(force_all=False):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Render Objaverse LDR files to PNG.")
+    parser = argparse.ArgumentParser(description="Render ShapeNet LDR files to PNG.")
+    parser.add_argument("category", type=str, help="ShapeNet category ID (e.g. 02691156)")
     parser.add_argument("--force", action="store_true", help="Force re-rendering of existing PNGs")
     args = parser.parse_args()
 
-    render_assets(force_all=args.force)
+    render_assets(args.category, force_all=args.force)

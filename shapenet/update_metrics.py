@@ -1,15 +1,14 @@
 import re
 import os
-import glob
+import argparse
 from collections import defaultdict
-
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).parent
-ASSETS_DIR = str(SCRIPT_DIR / 'assets')
-RESULTS_DIR = SCRIPT_DIR / 'results'
+ASSETS_DIR = SCRIPT_DIR / "assets"
+RESULTS_DIR = SCRIPT_DIR / "results"
 
-# Regex patterns for line-by-line parsing
+# Regex patterns (same format as objaverse pipeline)
 CONVERTING_PATTERN = re.compile(r"Converting ([a-f0-9]+)\.glb")
 SKIPPED_PATTERN = re.compile(r"SKIPPED ([a-f0-9]+)\.glb")
 FINISHED_PATTERN = re.compile(r"Finished in time: ([\d\.]+) s \| "
@@ -18,124 +17,75 @@ FINISHED_PATTERN = re.compile(r"Finished in time: ([\d\.]+) s \| "
                               r"# min connected components possible: (\d+) \| "
                               r"Stability: ([\d\.]+)")
 
-import argparse
 
-def parse_logs(target_resolutions=None):
-    model_data = defaultdict(dict) # {uid: {config_name: stats}}
-    all_configs = set()
+def parse_logs(input_dir, target_resolutions=None):
+    input_path = Path(input_dir)
+    model_data = defaultdict(dict)
+    all_configs = {}
 
-    # Pre-populate model_data with all glb files found in assets
-    glb_files = sorted(glob.glob(os.path.join(ASSETS_DIR, '*.glb')))
-    for g in glb_files:
-        filename = os.path.basename(g)
-        uid = os.path.splitext(filename)[0]
-        short_uid = uid[:8]
-        # Just accessing it creates the entry in defaultdict
-        _ = model_data[short_uid]
+    # Find all res_* directories
+    config_dirs = sorted(input_path.glob("res_*"))
 
-    # Find all config directories
-    config_dirs = glob.glob(os.path.join(ASSETS_DIR, 'res_*'))
-    
     for config_dir in config_dirs:
-        dir_name = os.path.basename(config_dir)
-        log_path = os.path.join(config_dir, 'logs.txt')
-        
-        if not os.path.exists(log_path):
+        dir_name = config_dir.name
+        log_path = config_dir / "logs.txt"
+
+        if not log_path.exists():
             continue
-            
-        # Beautify config name: res_20_heightpriority -> Res 20 HeightPriority
+
         parts = dir_name.split('_')
         try:
             resolution = int(parts[1])
         except (IndexError, ValueError):
             continue
-            
+
         if target_resolutions is not None and resolution not in target_resolutions:
             continue
 
-        variant = ' '.join([p.capitalize() for p in parts[2:]])
-        
-        # Determine internal sort key and display name
-        # We want to sort by Resolution, then by Variant order (Default < Plates < HeightPriority < Volume < Others)
-        variant_rank = {
-            'Baseline': 0,
-            'Plates': 1,
-            'Volume': 2,
-            'Height': 3,
-            'Twopass': 4,
-            'Alignment': 5
-        }.get(variant, 99)
-        
+        variant = ' '.join([p.capitalize() for p in parts[2:]]) if len(parts) > 2 else 'Default'
+
         config_obj = {
             'id': dir_name,
-            'display': f"Res {resolution} {variant}",
-            'sort_key': (resolution, variant_rank, variant),
+            'display': f"Res {resolution}" + (f" {variant}" if variant != 'Default' else ''),
+            'sort_key': (resolution, variant),
             'resolution': resolution,
-            'variant': variant
         }
-        
-        # We can't put objects in a set easily if not hashable, so lets store by id in a dict
-        all_configs.add(config_obj['id'])
-        
+        all_configs[dir_name] = config_obj
+
         with open(log_path, 'r') as f:
             lines = f.readlines()
-        
-        # Line-by-line parsing with state tracking
+
         current_uid = None
         for line in lines:
-            # Check for new conversion start
             conv_match = CONVERTING_PATTERN.search(line)
             if conv_match:
                 current_uid = conv_match.group(1)
                 continue
-            
-            # Check if current model was skipped - reset state
+
             skip_match = SKIPPED_PATTERN.search(line)
             if skip_match:
                 current_uid = None
                 continue
-            
-            # Check for finished line - only process if we have a valid current_uid
+
             fin_match = FINISHED_PATTERN.search(line)
             if fin_match and current_uid:
                 time_val, bricks, comps, min_comps, stability = fin_match.groups()
                 short_uid = current_uid[:8]
-                
-                model_data[short_uid][config_obj['id']] = {
+
+                model_data[short_uid][dir_name] = {
+                    'uid': current_uid,
                     'time': float(time_val),
                     'bricks': int(bricks),
                     'components': int(comps),
                     'min_components': int(min_comps),
                     'stability': float(stability),
-                    'config': config_obj
+                    'config': config_obj,
                 }
-                current_uid = None  # Reset after successful match
+                current_uid = None
 
-    # Sort configs list
-    # Reconstruct objects from one of the models or just re-parse dir names? 
-    # Let's just re-parse based on the collected IDs to have a sorted list of headers
-    sorted_configs = []
-    for cid in all_configs:
-        parts = cid.split('_')
-        resolution = int(parts[1])
-        variant = ' '.join([p.capitalize() for p in parts[2:]])
-        variant_rank = {
-            'Baseline': 0,
-            'Plates': 1,
-            'Volume': 2,
-            'Height': 3,
-            'Twopass': 4,
-            'Alignment': 5
-        }.get(variant, 99)
-        
-        sorted_configs.append({
-            'id': cid,
-            'display': f"Res {resolution} {variant}",
-            'sort_key': (resolution, variant_rank, variant)
-        })
-    
-    sorted_configs.sort(key=lambda x: x['sort_key'])
+    sorted_configs = sorted(all_configs.values(), key=lambda x: x['sort_key'])
     return model_data, sorted_configs
+
 
 def generate_html(model_data, sorted_configs):
     html = """<!DOCTYPE html>
@@ -143,7 +93,7 @@ def generate_html(model_data, sorted_configs):
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>BrickGPT Metric Comparison</title>
+    <title>ShapeNet Metric Comparison</title>
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; padding: 20px; max-width: 100%; margin: 0 auto; background-color: #f4f4f9; }
         h1, h2 { color: #333; }
@@ -161,28 +111,24 @@ def generate_html(model_data, sorted_configs):
 </head>
 <body>
 
-    <h1>Comparison Metrics</h1>
+    <h1>ShapeNet Comparison Metrics</h1>
 
     <table>
         <thead>
             <tr>
                 <th>Model ID / Metric</th>
 """
-    # Header Row
     for conf in sorted_configs:
         html += f"                <th>{conf['display']}</th>\n"
-    
+
     html += """            </tr>
         </thead>
         <tbody>
 """
 
-    # Body
     for uid, runs in model_data.items():
-        # Title Row
         html += f'            <tr class="model-header"><td colspan="{len(sorted_configs) + 1}">{uid}</td></tr>\n'
-        
-        # Metrics Rows
+
         metrics_order = [
             ('Time (s)', 'time'),
             ('Bricks', 'bricks'),
@@ -190,7 +136,7 @@ def generate_html(model_data, sorted_configs):
             ('Min Components', 'min_components'),
             ('Stability', 'stability')
         ]
-        
+
         for label, key in metrics_order:
             html += f"            <tr><td class='metric-label'>{label}</td>"
             for conf in sorted_configs:
@@ -198,27 +144,24 @@ def generate_html(model_data, sorted_configs):
                 if cid in runs:
                     val = runs[cid][key]
                     css_class = ""
-                    
-                    # Formatting logic
+
                     if key == 'components':
                         if runs[cid]['min_components'] == val:
                             css_class = ' class="good"'
                         else:
                             css_class = ' class="highlight"'
-                    
                     elif key == 'stability':
                         if val > 0.99: css_class = ' class="highlight"'
                         elif val < 0.35: css_class = ' class="good"'
                         val = f"{val:.3f}"
-                    
                     elif key == 'time':
                         val = f"{val:.2f}"
-                        
+
                     html += f"<td{css_class}>{val}</td>"
                 else:
                     html += "<td></td>"
             html += "</tr>\n"
-            
+
     html += """        </tbody>
     </table>
 
@@ -237,7 +180,6 @@ def generate_html(model_data, sorted_configs):
         <tbody>
 """
 
-    # Collect per-config stats for both tables
     config_stats = []
     for conf in sorted_configs:
         cid = conf['id']
@@ -277,7 +219,6 @@ def generate_html(model_data, sorted_configs):
             'stable_count': stable_count, 'unstable': unstable, 'disconnected': disconnected
         })
 
-    # Summary Table (all models)
     for s in config_stats:
         if s['count'] > 0:
             avg_time = s['total_time'] / s['count']
@@ -314,7 +255,6 @@ def generate_html(model_data, sorted_configs):
         <tbody>
 """
 
-    # Stable & connected only table
     for s in config_stats:
         if s['stable_count'] > 0:
             avg_time = s['stable_only_time'] / s['stable_count']
@@ -341,19 +281,21 @@ def generate_html(model_data, sorted_configs):
 """
     return html
 
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Generate comparison metrics HTML.')
-    parser.add_argument('--resolutions', nargs='+', type=int, default=None, help='Filter by specific resolutions (e.g., 20 50)')
-    parser.add_argument('-o', '--output', type=str, default=None, help='Output HTML file path. Defaults to objaverse/comparison_metrics.html')
+    parser = argparse.ArgumentParser(description='Generate ShapeNet comparison metrics HTML.')
+    parser.add_argument('category', type=str, help='ShapeNet category ID (e.g. 02691156)')
+    parser.add_argument('--resolutions', nargs='+', type=int, default=None, help='Filter by specific resolutions')
+    parser.add_argument('-o', '--output', type=str, default=None, help='Output HTML file path')
     args = parser.parse_args()
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     output_path = args.output if args.output else str(RESULTS_DIR / 'comparison_metrics.html')
 
-    data, configs = parse_logs(target_resolutions=args.resolutions)
+    data, configs = parse_logs(str(ASSETS_DIR / args.category), target_resolutions=args.resolutions)
     html_content = generate_html(data, configs)
 
     with open(output_path, 'w') as f:
         f.write(html_content)
 
-    print(f"Successfully generated {output_path} from {len(configs)} configurations.")
+    print(f"Generated {output_path} from {len(configs)} configurations, {len(data)} models.")
