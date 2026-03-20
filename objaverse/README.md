@@ -44,6 +44,24 @@ uv run python objaverse/generate_gallery.py
 
 Generates `results/gallery.html` comparing original models with LEGO conversions.
 
+### 4. Visualize Slopes
+
+Runs slope detection on all downloaded `.glb` meshes, exports colored 3D models showing the slope regions, and compiles an interactive HTML gallery using `<model-viewer>`.
+
+- **Script:** `visualize_slopes.py`
+- **Output:**
+  - Colored meshes (`.glb`) stored in `assets/slope_detection/`
+  - HTML Gallery output at `results/slope_gallery.html` by default.
+- **Usage:**
+
+  ```bash
+  # Execute with default parameters
+  uv run objaverse/visualize_slopes.py
+
+  # Adjust area threshold and specify custom HTML output path
+  uv run objaverse/visualize_slopes.py --min-area 0.005 -o custom_output/slopes.html
+  ```
+
 ## Directory Structure
 
 ```
