@@ -2,7 +2,7 @@
 
 Usage:
     uv run objaverse/visualize_slopes.py
-    uv run objaverse/visualize_slopes.py --min-area 0.005
+    uv run objaverse/visualize_slopes.py --min-area-fraction 0.005
     uv run objaverse/visualize_slopes.py -o results/slope_gallery.html
 
 Processes all .glb files in objaverse/assets/, runs slope detection on each,
@@ -24,6 +24,7 @@ import numpy as np
 import open3d as o3d
 
 from mesh2brick.mesh2brick import normalize_mesh
+from mesh2brick.mesh_deformation import deform_mesh
 from mesh2brick.slope_detection import (
     compute_optimal_scale,
     detect_slopes,
@@ -52,7 +53,8 @@ def process_mesh(
     mesh_path: Path,
     x_rotation: float,
     min_area_fraction: float,
-    normal_thresh: float,
+    normal_deg_err: float,
+    planar_deg_err: float,
     glb_output_dir: Path,
 ) -> dict:
     """Process one mesh: detect slopes, color it, export GLB, return results."""
@@ -85,7 +87,8 @@ def process_mesh(
     regions = detect_slopes(
         mesh,
         min_area_fraction=min_area_fraction,
-        normal_deg_err=normal_thresh,
+        normal_deg_err=normal_deg_err,
+        planar_deg_err=planar_deg_err,
     )
     slope_bricks = get_slope_bricks()
 
@@ -143,10 +146,46 @@ def process_mesh(
     glb_path = glb_output_dir / glb_filename
     o3d.io.write_triangle_mesh(str(glb_path), mesh, write_vertex_colors=True)
 
+    # Run deformation if there are assignments
+    deform_info = None
+    deformed_glb_filename = None
+    if assignments:
+        try:
+            result = deform_mesh(mesh, scale=optimal_scale, assignments=assignments, max_iter=200)
+
+            # Build a deformed mesh for export
+            deformed_mesh = o3d.geometry.TriangleMesh()
+            deformed_mesh.vertices = o3d.utility.Vector3dVector(result.deformed_vertices)
+            deformed_mesh.triangles = mesh.triangles
+            deformed_mesh.compute_vertex_normals()
+
+            # Color deformed mesh the same way
+            deformed_mesh.vertex_colors = mesh.vertex_colors
+
+            deformed_glb_filename = f"{name}_deformed.glb"
+            deformed_glb_path = glb_output_dir / deformed_glb_filename
+            o3d.io.write_triangle_mesh(str(deformed_glb_path), deformed_mesh, write_vertex_colors=True)
+
+            # Compute corner snap quality
+            corner_verts = result.deformed_vertices[result.slope_corner_indices]
+            frac_parts = np.abs(corner_verts - np.round(corner_verts))
+            avg_frac = float(frac_parts.mean()) if len(corner_verts) > 0 else 0.0
+
+            deform_info = {
+                "energy": result.final_energy,
+                "n_corners": len(result.slope_corner_indices),
+                "n_flat_planes": len(result.flat_planes),
+                "n_splits": len(result.split_vertices),
+                "avg_corner_frac": avg_frac,
+            }
+        except Exception as e:
+            deform_info = {"error": str(e)}
+
     return {
         "name": name,
         "short_name": short_name,
         "glb_filename": glb_filename,
+        "deformed_glb_filename": deformed_glb_filename,
         "n_faces": n_faces,
         "n_horiz": n_horiz,
         "n_vert": n_vert,
@@ -154,6 +193,7 @@ def process_mesh(
         "n_regions": len(regions),
         "n_assigned": sum(1 for r in region_info if r.get("assigned")),
         "optimal_scale": optimal_scale,
+        "deform_info": deform_info,
         "regions": region_info,
     }
 
@@ -210,6 +250,41 @@ def generate_html(results: list[dict], output_path: Path, params: dict):
 
         src_url = f"{rel_mesh_dir}/{r['glb_filename']}" if mesh_dir else r['glb_filename']
 
+        # Build deformation viewer + stats if available
+        deform_viewer = ""
+        deform_stats = ""
+        di = r.get("deform_info")
+        deformed_glb = r.get("deformed_glb_filename")
+        if deformed_glb and di and "error" not in di:
+            deformed_url = f"{rel_mesh_dir}/{deformed_glb}" if mesh_dir else deformed_glb
+            deform_viewer = f"""
+                <div class="viewer-container">
+                    <div class="viewer-label">Deformed</div>
+                    <model-viewer
+                        src="{deformed_url}"
+                        camera-controls
+                        auto-rotate
+                        shadow-intensity="0.5"
+                        environment-image="neutral"
+                        interaction-prompt="none"
+                        style="width:100%;height:100%">
+                    </model-viewer>
+                </div>"""
+            snap_pct = (1.0 - di['avg_corner_frac']) * 100
+            deform_stats = f"""
+                    <div class="deform-stats">
+                        <h3>Deformation</h3>
+                        <table>
+                            <tr><td>Energy</td><td>{di['energy']:.3f}</td></tr>
+                            <tr><td>Corners</td><td>{di['n_corners']}</td></tr>
+                            <tr><td>Flat planes</td><td>{di['n_flat_planes']}</td></tr>
+                            <tr><td>Split verts</td><td>{di['n_splits']}</td></tr>
+                            <tr><td>Corner snap</td><td>{snap_pct:.0f}%</td></tr>
+                        </table>
+                    </div>"""
+        elif di and "error" in di:
+            deform_stats = f'<p class="error-msg" style="font-size:0.8em">Deform error: {di["error"]}</p>'
+
         cards.append(f"""
         <div class="card">
             <div class="card-header">
@@ -220,6 +295,7 @@ def generate_html(results: list[dict], output_path: Path, params: dict):
             </div>
             <div class="card-body">
                 <div class="viewer-container">
+                    <div class="viewer-label">Original</div>
                     <model-viewer
                         src="{src_url}"
                         camera-controls
@@ -229,7 +305,7 @@ def generate_html(results: list[dict], output_path: Path, params: dict):
                         interaction-prompt="none"
                         style="width:100%;height:100%">
                     </model-viewer>
-                </div>
+                </div>{deform_viewer}
                 <div class="details">
                     <h3>Slope Regions</h3>
                     <table>
@@ -237,7 +313,7 @@ def generate_html(results: list[dict], output_path: Path, params: dict):
                             <tr><th>#</th><th>Faces</th><th>Angle</th><th>Dir</th><th>Best Brick</th><th>s_min</th><th>Studs</th><th>Status</th></tr>
                         </thead>
                         <tbody>{region_rows}</tbody>
-                    </table>
+                    </table>{deform_stats}
                     <p class="uid-full" title="{r['name']}">{r['name']}</p>
                 </div>
             </div>
@@ -273,7 +349,9 @@ def generate_html(results: list[dict], output_path: Path, params: dict):
     .region-count {{ font-size: 0.85em; background: rgba(255,255,255,0.15); padding: 3px 10px;
                      border-radius: 4px; }}
     .card-body {{ display: flex; gap: 0; }}
-    .viewer-container {{ flex: 0 0 450px; height: 400px; background: #fafafa; }}
+    .viewer-container {{ flex: 0 0 320px; height: 400px; background: #fafafa; position: relative; }}
+    .viewer-label {{ position: absolute; top: 8px; left: 8px; z-index: 1; background: rgba(0,0,0,0.5);
+                     color: white; padding: 2px 8px; border-radius: 3px; font-size: 0.75em; }}
     .details {{ flex: 1; padding: 16px; overflow-x: auto; }}
     .details h3 {{ margin: 0 0 10px; font-size: 1em; }}
     table {{ width: 100%; border-collapse: collapse; font-size: 0.85em; }}
@@ -283,6 +361,9 @@ def generate_html(results: list[dict], output_path: Path, params: dict):
     .dir-badge {{ display: inline-block; padding: 2px 8px; border-radius: 3px; color: white;
                   font-size: 0.85em; font-weight: 600; }}
     .uid-full {{ font-size: 0.75em; color: #999; margin-top: 12px; word-break: break-all; }}
+    .deform-stats {{ margin-top: 12px; }}
+    .deform-stats h3 {{ font-size: 0.95em; margin: 0 0 6px; }}
+    .deform-stats table {{ font-size: 0.8em; }}
     tr.discarded {{ opacity: 0.5; }}
     .status-assigned {{ color: #27ae60; font-weight: 600; }}
     .status-discarded {{ color: #c0392b; font-size: 0.85em; }}
@@ -294,8 +375,8 @@ def generate_html(results: list[dict], output_path: Path, params: dict):
 </head>
 <body>
 <h1>Slope Detection Results</h1>
-<div class="params">min_area={params['min_area']}, normal_thresh={params['normal_thresh']}&deg;,
-    x_rotation={params['x_rotation']}&deg;</div>
+<div class="params">min_area_fraction={params['min_area_fraction']}, normal_deg_err={params['normal_deg_err']}&deg;,
+    planar_deg_err={params['planar_deg_err']}&deg;, x_rotation={params['x_rotation']}&deg;</div>
 <div class="summary"><b>{summary_total}</b> models &mdash;
     <b>{summary_with_slopes}</b> with slopes &mdash;
     <b>{summary_total_regions}</b> total regions</div>
@@ -322,10 +403,12 @@ def main():
                         help="Output HTML path (default: objaverse/slope_gallery.html)")
     parser.add_argument("--x-rotation", type=float, default=90.0,
                         help="X rotation in degrees (default: 90)")
-    parser.add_argument("--min-area", type=float, default=0.01,
+    parser.add_argument("--min-area-fraction", type=float, default=0.01,
                         help="Min region area as fraction of total mesh area (default: 0.01)")
-    parser.add_argument("--normal-thresh", type=float, default=15.0,
-                        help="Max normal angle diff for BFS grouping in degrees (default: 15)")
+    parser.add_argument("--normal-deg-err", type=float, default=10.0,
+                        help="Max normal angle diff for BFS grouping in degrees (default: 10)")
+    parser.add_argument("--planar-deg-err", type=float, default=10.0,
+                        help="Faces within this angle of horizontal/vertical are excluded (default: 10)")
     args = parser.parse_args()
 
     output_path = Path(args.output).resolve() if args.output else SCRIPT_DIR / "results" / "slope_gallery.html"
@@ -351,8 +434,9 @@ def main():
         result = process_mesh(
             glb_path,
             x_rotation=args.x_rotation,
-            min_area_fraction=args.min_area,
-            normal_thresh=args.normal_thresh,
+            min_area_fraction=args.min_area_fraction,
+            normal_deg_err=args.normal_deg_err,
+            planar_deg_err=args.planar_deg_err,
             glb_output_dir=mesh_output_dir,
         )
         n_regions = result.get("n_regions", 0)
@@ -363,8 +447,9 @@ def main():
         results.append(result)
 
     generate_html(results, output_path, {
-        "min_area": args.min_area,
-        "normal_thresh": args.normal_thresh,
+        "min_area_fraction": args.min_area_fraction,
+        "normal_deg_err": args.normal_deg_err,
+        "planar_deg_err": args.planar_deg_err,
         "x_rotation": args.x_rotation,
         "mesh_dir": mesh_output_dir,
     })
