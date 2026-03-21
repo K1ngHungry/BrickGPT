@@ -53,12 +53,12 @@ def run_deformed(mesh_path: str, resolution: int) -> dict:
         print(f"  Region {i}: dir={region.slope_direction}, iso_angle={region.slope_angle:.1f}°, "
               f"voxel_angle={voxel_angle:.1f}°, length={region.length:.3f}, width={region.width:.3f}, "
               f"s_min={s_min}, matched_angles={[b['angle'] for b in matched[:3]]}")
-    optimal_scale, assignments = compute_optimal_scale(
+    optimal_scale, assignments, irregular_assignments = compute_optimal_scale(
         regions, default_scale=resolution,
     )
     s = int(optimal_scale)
     world_dim = (s, s, s * 3)
-    print(f"  Regions: {len(regions)}, Assignments: {len(assignments)}, "
+    print(f"  Regions: {len(regions)}, Assignments: {len(assignments)} rect, {len(irregular_assignments)} irreg, "
           f"Scale: {optimal_scale:.1f}, World dim: {world_dim}")
 
     # Deformation (or just scale if no slopes)
@@ -107,10 +107,10 @@ def run_deformed(mesh_path: str, resolution: int) -> dict:
     print(f"  Mesh max bound: {np.asarray(mesh.get_max_bound())}")
 
     # Slope tiling: place slope bricks first, then regular bricks on remainder
-    if assignments:
+    if assignments or irregular_assignments:
         voxel_origin = np.asarray(voxel_grid.origin)
         slope_bricks, remaining_voxels = place_slope_bricks(
-            voxels, mesh, assignments, voxel_origin=voxel_origin)
+            voxels, mesh, assignments, irregular_assignments, voxel_origin=voxel_origin)
         print(f"  Slope bricks placed: {len(slope_bricks)}")
     else:
         slope_bricks = []
@@ -140,6 +140,7 @@ def run_deformed(mesh_path: str, resolution: int) -> dict:
         "slope_bricks": slope_bricks,
         "mesh": mesh,
         "assignments": assignments,
+        "irregular_assignments": irregular_assignments,
         "world_dim": world_dim,
     }
 
@@ -151,7 +152,7 @@ def print_stats(result: dict) -> None:
     print(f"  Time: {result['time']:.2f}s")
     if "scale" in result:
         print(f"  Scale: {result['scale']:.1f}")
-        print(f"  Regions: {result['n_regions']}, Assignments: {result['n_assignments']}")
+        print(f"  Regions: {result['n_regions']}, Assignments: {result['n_assignments']} rect, {len(result.get('irregular_assignments', []))} irreg")
         print(f"  Deformation energy: {result['energy']:.4f}")
 
 

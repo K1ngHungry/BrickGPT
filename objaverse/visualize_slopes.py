@@ -93,10 +93,11 @@ def process_mesh(
     slope_bricks = get_slope_bricks()
 
     # Compute optimal scale
-    optimal_scale, assignments = compute_optimal_scale(
+    optimal_scale, assignments, irregular_assignments = compute_optimal_scale(
         regions, default_scale=20.0, max_scale=50.0,
     )
     assigned_regions = {id(region) for region, _ in assignments}
+    irregular_regions = {id(region) for region, _ in irregular_assignments}
 
     region_info = []
     for region in regions:
@@ -104,6 +105,7 @@ def process_mesh(
         best = matches[0] if matches else None
         s_min = _compute_s_min(region, slope_bricks)
         is_assigned = id(region) in assigned_regions
+        is_irregular = id(region) in irregular_regions
         studs_l = region.length * optimal_scale if s_min else 0
         studs_w = region.width * optimal_scale if s_min else 0
         region_info.append({
@@ -116,6 +118,7 @@ def process_mesh(
             "best_brick": best,
             "s_min": s_min,
             "assigned": is_assigned,
+            "irregular": is_irregular,
             "studs_l": studs_l,
             "studs_w": studs_w,
         })
@@ -229,8 +232,15 @@ def generate_html(results: list[dict], output_path: Path, params: dict):
                              f"({b['length']}&times;{b['width']}&times;{b['height']}, "
                              f"{b['angle']:.1f}&deg;)")
             s_min_str = f"{reg['s_min']:.1f}" if reg.get("s_min") else "&mdash;"
-            status_cls = "assigned" if reg.get("assigned") else "discarded"
-            status_str = "&#10003;" if reg.get("assigned") else "&#10007; fallback"
+            if reg.get("assigned"):
+                status_cls = "assigned"
+                status_str = "&#10003; rigid"
+            elif reg.get("irregular"):
+                status_cls = "assigned"
+                status_str = "&#10003; 1x1 fallback"
+            else:
+                status_cls = "discarded"
+                status_str = "&#10007; discarded"
             studs_str = (f"{reg['studs_l']:.1f}&times;{reg['studs_w']:.1f}"
                          if reg.get("s_min") else "&mdash;")
             region_rows += f"""
