@@ -17,6 +17,7 @@ import open3d as o3d
 from mesh2brick.mesh2brick import Mesh2Brick, normalize_mesh
 from mesh2brick.mesh_deformation import deform_mesh, apply_scale
 from mesh2brick.slope_detection import detect_slopes, compute_optimal_scale
+from mesh2brick.slope_tiling import place_slope_bricks
 from mesh2brick.voxel2brick import voxel2brick
 
 
@@ -44,6 +45,14 @@ def run_deformed(mesh_path: str, resolution: int) -> dict:
 
     # Slope detection on isotropic mesh
     regions = detect_slopes(mesh)
+    from mesh2brick.slope_detection import iso_to_voxel_angle, match_slope_to_bricks, _compute_s_min
+    for i, region in enumerate(regions):
+        voxel_angle = iso_to_voxel_angle(region.slope_angle)
+        s_min = _compute_s_min(region)
+        matched = match_slope_to_bricks(voxel_angle)
+        print(f"  Region {i}: dir={region.slope_direction}, iso_angle={region.slope_angle:.1f}°, "
+              f"voxel_angle={voxel_angle:.1f}°, length={region.length:.3f}, width={region.width:.3f}, "
+              f"s_min={s_min}, matched_angles={[b['angle'] for b in matched[:3]]}")
     optimal_scale, assignments = compute_optimal_scale(
         regions, default_scale=resolution,
     )
@@ -93,9 +102,31 @@ def run_deformed(mesh_path: str, resolution: int) -> dict:
         if all(0 <= i < d for i, d in zip(idx, world_dim)):
             voxels[idx] = 1
     print(f"  Voxelized: {voxels.sum()} filled voxels")
+    print(f"  Voxel grid origin: {np.asarray(voxel_grid.origin)}")
+    print(f"  Mesh min bound: {np.asarray(mesh.get_min_bound())}")
+    print(f"  Mesh max bound: {np.asarray(mesh.get_max_bound())}")
 
-    # Standard voxel2brick (no slope tiling)
-    bricks = voxel2brick(voxels)
+    # Slope tiling: place slope bricks first, then regular bricks on remainder
+    if assignments:
+        voxel_origin = np.asarray(voxel_grid.origin)
+        slope_bricks, remaining_voxels = place_slope_bricks(
+            voxels, mesh, assignments, voxel_origin=voxel_origin)
+        print(f"  Slope bricks placed: {len(slope_bricks)}")
+    else:
+        slope_bricks = []
+        remaining_voxels = voxels
+
+    bricks = voxel2brick(remaining_voxels)
+    # Check for voxel-level overlap before combining
+    overlap_count = 0
+    for sb in slope_bricks:
+        overlap_count += bricks.voxel_occupancy[sb.slice].sum()
+    if overlap_count > 0:
+        print(f"  WARNING: {overlap_count} voxels overlap between slope and regular bricks")
+    else:
+        print(f"  No voxel overlap between slope and regular bricks")
+    for brick in slope_bricks:
+        bricks.add_brick(brick)
     elapsed = time.time() - t0
 
     return {
@@ -106,6 +137,10 @@ def run_deformed(mesh_path: str, resolution: int) -> dict:
         "n_regions": len(regions),
         "n_assignments": len(assignments),
         "energy": energy,
+        "slope_bricks": slope_bricks,
+        "mesh": mesh,
+        "assignments": assignments,
+        "world_dim": world_dim,
     }
 
 
@@ -161,6 +196,44 @@ def main():
     with open(deformed_path, "w") as f:
         f.write(deformed["bricks"].to_ldr())
     print(f"Saved deformed: {deformed_path}")
+
+    # Save slopes-only LDR
+    slope_bricks = deformed.get("slope_bricks", [])
+    if slope_bricks:
+        from mesh2brick.data.brick_structure import BrickStructure
+        slope_struct = BrickStructure(slope_bricks, world_dim=deformed["world_dim"])
+        slopes_ldr_path = output_dir / f"{model_id}_slopes_only.ldr"
+        with open(slopes_ldr_path, "w") as f:
+            f.write(slope_struct.to_ldr())
+        print(f"Saved slopes-only LDR: {slopes_ldr_path}")
+
+    # Save mesh with only the slope region faces
+    assignments = deformed.get("assignments", [])
+    deformed_mesh = deformed.get("mesh")
+    if assignments and deformed_mesh is not None:
+        all_face_indices = []
+        for region, _ in assignments:
+            all_face_indices.extend(region.face_indices)
+        all_face_indices = sorted(set(all_face_indices))
+
+        triangles = np.asarray(deformed_mesh.triangles)
+        vertices = np.asarray(deformed_mesh.vertices)
+        slope_triangles = triangles[all_face_indices]
+
+        # Remap vertex indices to only include used vertices
+        used_verts = np.unique(slope_triangles)
+        vert_map = {old: new for new, old in enumerate(used_verts)}
+        new_triangles = np.vectorize(vert_map.get)(slope_triangles)
+        new_vertices = vertices[used_verts]
+
+        slope_mesh = o3d.geometry.TriangleMesh()
+        slope_mesh.vertices = o3d.utility.Vector3dVector(new_vertices)
+        slope_mesh.triangles = o3d.utility.Vector3iVector(new_triangles)
+        slope_mesh.compute_vertex_normals()
+
+        slope_mesh_path = output_dir / f"{model_id}_slope_regions.glb"
+        o3d.io.write_triangle_mesh(str(slope_mesh_path), slope_mesh)
+        print(f"Saved slope regions mesh: {slope_mesh_path}")
 
 
 if __name__ == "__main__":
