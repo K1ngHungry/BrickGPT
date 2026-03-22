@@ -33,7 +33,9 @@ def run_baseline(mesh_path: str, resolution: int) -> dict:
     return {"bricks": bricks, "time": elapsed, "label": "baseline"}
 
 
-def run_deformed(mesh_path: str, resolution: int) -> dict:
+def run_deformed(mesh_path: str, resolution: int,
+                 planar_deg_err: float = 10.0, normal_deg_err: float = 10.0,
+                 min_area_fraction: float = 0.05) -> dict:
     """Deformation pipeline — detect slopes, deform, then standard voxel2brick."""
     print("=" * 60)
     print("DEFORMED (slope detection + deformation + standard voxel2brick)")
@@ -44,7 +46,9 @@ def run_deformed(mesh_path: str, resolution: int) -> dict:
     mesh = normalize_mesh(mesh)
 
     # Slope detection on isotropic mesh
-    regions = detect_slopes(mesh)
+    regions = detect_slopes(mesh, planar_deg_err=planar_deg_err,
+                            normal_deg_err=normal_deg_err,
+                            min_area_fraction=min_area_fraction)
     from mesh2brick.slope_detection import iso_to_voxel_angle, match_slope_to_bricks, _compute_s_min
     for i, region in enumerate(regions):
         voxel_angle = iso_to_voxel_angle(region.slope_angle)
@@ -53,12 +57,12 @@ def run_deformed(mesh_path: str, resolution: int) -> dict:
         print(f"  Region {i}: dir={region.slope_direction}, iso_angle={region.slope_angle:.1f}°, "
               f"voxel_angle={voxel_angle:.1f}°, length={region.length:.3f}, width={region.width:.3f}, "
               f"s_min={s_min}, matched_angles={[b['angle'] for b in matched[:3]]}")
-    optimal_scale, assignments, irregular_assignments = compute_optimal_scale(
+    optimal_scale, assignments = compute_optimal_scale(
         regions, default_scale=resolution,
     )
     s = int(optimal_scale)
     world_dim = (s, s, s * 3)
-    print(f"  Regions: {len(regions)}, Assignments: {len(assignments)} rect, {len(irregular_assignments)} irreg, "
+    print(f"  Regions: {len(regions)}, Assignments: {len(assignments)}, "
           f"Scale: {optimal_scale:.1f}, World dim: {world_dim}")
 
     # Deformation (or just scale if no slopes)
@@ -107,10 +111,10 @@ def run_deformed(mesh_path: str, resolution: int) -> dict:
     print(f"  Mesh max bound: {np.asarray(mesh.get_max_bound())}")
 
     # Slope tiling: place slope bricks first, then regular bricks on remainder
-    if assignments or irregular_assignments:
+    if assignments:
         voxel_origin = np.asarray(voxel_grid.origin)
         slope_bricks, remaining_voxels = place_slope_bricks(
-            voxels, mesh, assignments, irregular_assignments, voxel_origin=voxel_origin)
+            voxels, mesh, assignments, voxel_origin=voxel_origin)
         print(f"  Slope bricks placed: {len(slope_bricks)}")
     else:
         slope_bricks = []
@@ -140,7 +144,6 @@ def run_deformed(mesh_path: str, resolution: int) -> dict:
         "slope_bricks": slope_bricks,
         "mesh": mesh,
         "assignments": assignments,
-        "irregular_assignments": irregular_assignments,
         "world_dim": world_dim,
     }
 
@@ -152,7 +155,7 @@ def print_stats(result: dict) -> None:
     print(f"  Time: {result['time']:.2f}s")
     if "scale" in result:
         print(f"  Scale: {result['scale']:.1f}")
-        print(f"  Regions: {result['n_regions']}, Assignments: {result['n_assignments']} rect, {len(result.get('irregular_assignments', []))} irreg")
+        print(f"  Regions: {result['n_regions']}, Assignments: {result['n_assignments']}")
         print(f"  Deformation energy: {result['energy']:.4f}")
 
 
@@ -165,6 +168,12 @@ def main():
                         help="Output directory for LDR files")
     parser.add_argument("--resolution", type=int, default=20,
                         help="Target resolution (default 20)")
+    parser.add_argument("--planar-deg-err", type=float, default=10.0,
+                        help="Faces within this angle of horizontal/vertical are excluded (default 10.0)")
+    parser.add_argument("--normal-deg-err", type=float, default=10.0,
+                        help="Max angular difference for BFS grouping (default 10.0)")
+    parser.add_argument("--min-area-fraction", type=float, default=0.05,
+                        help="Minimum region area as fraction of total mesh area (default 0.05)")
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir)
@@ -174,7 +183,10 @@ def main():
     # Run both pipelines
     baseline = run_baseline(args.mesh, args.resolution)
     print()
-    deformed = run_deformed(args.mesh, args.resolution)
+    deformed = run_deformed(args.mesh, args.resolution,
+                            planar_deg_err=args.planar_deg_err,
+                            normal_deg_err=args.normal_deg_err,
+                            min_area_fraction=args.min_area_fraction)
 
     # Print comparison
     print()
