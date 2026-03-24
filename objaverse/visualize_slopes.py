@@ -24,14 +24,8 @@ import numpy as np
 import open3d as o3d
 
 from mesh2brick.mesh2brick import normalize_mesh
-from mesh2brick.mesh_deformation import deform_mesh
-from mesh2brick.slope_detection import (
-    compute_optimal_scale,
-    detect_slopes,
-    get_slope_bricks,
-    match_slope_to_bricks,
-    _compute_s_min,
-)
+from mesh2brick.slopes import prepare_slopes, SlopeConfig
+from mesh2brick.slopes.detection import get_slope_bricks, match_slope_to_bricks, iso_to_voxel_angle
 
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
@@ -52,9 +46,7 @@ DARK_GRAY = [0.4, 0.4, 0.4]
 def process_mesh(
     mesh_path: Path,
     x_rotation: float,
-    min_area_fraction: float,
-    normal_deg_err: float,
-    planar_deg_err: float,
+    slope_cfg: SlopeConfig,
     glb_output_dir: Path,
 ) -> dict:
     """Process one mesh: detect slopes, color it, export GLB, return results."""
@@ -66,11 +58,6 @@ def process_mesh(
         return {"name": name, "short_name": short_name, "error": "Failed to load mesh"}
 
     mesh = normalize_mesh(mesh, x_rotation=x_rotation)
-
-    # vertices = np.asarray(mesh.vertices)
-    # vertices[:, 2] *= 3.0
-    # mesh.vertices = o3d.utility.Vector3dVector(vertices)
-
     mesh.compute_triangle_normals()
     mesh.compute_vertex_normals()
 
@@ -84,25 +71,24 @@ def process_mesh(
     n_vert = int(np.sum(angle_from_vertical > 80))
     n_sloped = int(np.sum((angle_from_vertical >= 10) & (angle_from_vertical <= 80)))
 
-    regions = detect_slopes(
-        mesh,
-        min_area_fraction=min_area_fraction,
-        normal_deg_err=normal_deg_err,
-        planar_deg_err=planar_deg_err,
-    )
-    slope_bricks = get_slope_bricks()
+    # Run slope detection + deformation pipeline
+    slope_result = prepare_slopes(mesh, resolution=20, cfg=slope_cfg)
+    regions = slope_result.regions
+    assignments = slope_result.assignments
+    optimal_scale = slope_result.scale
 
-    # Compute optimal scale
-    optimal_scale, assignments = compute_optimal_scale(
-        regions, default_scale=20.0, max_scale=50.0,
-    )
+    slope_bricks = get_slope_bricks()
     assigned_regions = {id(region) for region, _ in assignments}
 
     region_info = []
     for region in regions:
-        matches = match_slope_to_bricks(region.slope_angle, slope_bricks)
+        voxel_angle = iso_to_voxel_angle(region.slope_angle)
+        matches = match_slope_to_bricks(voxel_angle, slope_bricks)
         best = matches[0] if matches else None
-        s_min = _compute_s_min(region, slope_bricks)
+        
+        s_min = None
+        if matches and region.length > 0 and region.width > 0:
+            s_min = min(max(b['length'] / region.length, b['width'] / region.width) for b in matches)
         is_assigned = id(region) in assigned_regions
         studs_l = region.length * optimal_scale if s_min else 0
         studs_w = region.width * optimal_scale if s_min else 0
@@ -146,20 +132,20 @@ def process_mesh(
     glb_path = glb_output_dir / glb_filename
     o3d.io.write_triangle_mesh(str(glb_path), mesh, write_vertex_colors=True)
 
-    # Run deformation if there are assignments
+    # Export deformed mesh if available
     deform_info = None
     deformed_glb_filename = None
-    if assignments:
+    if slope_result.deformation is not None:
         try:
-            result = deform_mesh(mesh, scale=optimal_scale, assignments=assignments, max_iter=200)
+            result = slope_result.deformation
 
-            # Build a deformed mesh for export
+            # Build deformed mesh for export (undo Z-scale from prepare_slopes)
+            deformed_verts = np.asarray(slope_result.mesh.vertices).copy()
+            deformed_verts[:, 2] /= 3.0
             deformed_mesh = o3d.geometry.TriangleMesh()
-            deformed_mesh.vertices = o3d.utility.Vector3dVector(result.deformed_vertices)
+            deformed_mesh.vertices = o3d.utility.Vector3dVector(deformed_verts)
             deformed_mesh.triangles = mesh.triangles
             deformed_mesh.compute_vertex_normals()
-
-            # Color deformed mesh the same way
             deformed_mesh.vertex_colors = mesh.vertex_colors
 
             deformed_glb_filename = f"{name}_deformed.glb"
@@ -407,12 +393,13 @@ def main():
                         help="Output HTML path (default: objaverse/slope_gallery.html)")
     parser.add_argument("--x-rotation", type=float, default=90.0,
                         help="X rotation in degrees (default: 90)")
-    parser.add_argument("--min-area-fraction", type=float, default=0.01,
-                        help="Min region area as fraction of total mesh area (default: 0.01)")
-    parser.add_argument("--normal-deg-err", type=float, default=10.0,
-                        help="Max normal angle diff for BFS grouping in degrees (default: 10)")
-    parser.add_argument("--planar-deg-err", type=float, default=10.0,
-                        help="Faces within this angle of horizontal/vertical are excluded (default: 10)")
+    _defaults = SlopeConfig()
+    parser.add_argument("--min-area-fraction", type=float, default=_defaults.min_area_fraction,
+                        help=f"Min region area as fraction of total mesh area (default: {_defaults.min_area_fraction})")
+    parser.add_argument("--normal-deg-err", type=float, default=_defaults.normal_deg_err,
+                        help=f"Max normal angle diff for BFS grouping in degrees (default: {_defaults.normal_deg_err})")
+    parser.add_argument("--planar-deg-err", type=float, default=_defaults.planar_deg_err,
+                        help=f"Faces within this angle of horizontal/vertical are excluded (default: {_defaults.planar_deg_err})")
     args = parser.parse_args()
 
     output_path = Path(args.output).resolve() if args.output else SCRIPT_DIR / "results" / "slope_gallery.html"
@@ -431,6 +418,12 @@ def main():
 
     print(f"Found {len(glb_files)} models in {ASSETS_DIR}")
 
+    slope_cfg = SlopeConfig(
+        planar_deg_err=args.planar_deg_err,
+        normal_deg_err=args.normal_deg_err,
+        min_area_fraction=args.min_area_fraction,
+    )
+
     results = []
     for i, glb_path in enumerate(glb_files, 1):
         short = glb_path.stem[:8]
@@ -438,9 +431,7 @@ def main():
         result = process_mesh(
             glb_path,
             x_rotation=args.x_rotation,
-            min_area_fraction=args.min_area_fraction,
-            normal_deg_err=args.normal_deg_err,
-            planar_deg_err=args.planar_deg_err,
+            slope_cfg=slope_cfg,
             glb_output_dir=mesh_output_dir,
         )
         n_regions = result.get("n_regions", 0)
