@@ -64,9 +64,8 @@ def run_deformed(mesh_path: str, resolution: int,
         regions, default_scale=resolution,
     )
     s = int(optimal_scale)
-    world_dim = (s, s, s * 3)
     print(f"  Regions: {len(regions)}, Assignments: {len(assignments)}, "
-          f"Scale: {optimal_scale:.1f}, World dim: {world_dim}")
+          f"Scale: {optimal_scale:.1f}")
 
     # Deformation (or just scale if no slopes)
     energy = 0.0
@@ -100,6 +99,15 @@ def run_deformed(mesh_path: str, resolution: int,
     vertices = np.asarray(mesh.vertices)
     vertices[:, 2] *= 3.0
     mesh.vertices = o3d.utility.Vector3dVector(vertices)
+
+    # Recompute world_dim from actual mesh bounds (deformation can expand it)
+    extent = np.asarray(mesh.get_max_bound()) - np.asarray(mesh.get_min_bound())
+    world_dim = (
+        max(s, int(np.ceil(extent[0]))),
+        max(s, int(np.ceil(extent[1]))),
+        max(s * 3, int(np.ceil(extent[2]))),
+    )
+    print(f"  Adjusted world dim: {world_dim}")
 
     # Voxelize directly at voxel_size=1.0
     voxel_grid = o3d.geometry.VoxelGrid.create_from_triangle_mesh(mesh, 1.0)
