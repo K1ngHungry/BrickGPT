@@ -125,7 +125,8 @@ def run_deformed(mesh_path: str, resolution: int,
     if assignments:
         voxel_origin = np.asarray(voxel_grid.origin)
         slope_bricks, remaining_voxels = place_slope_bricks(
-            voxels, mesh, assignments, voxel_origin=voxel_origin)
+            voxels, mesh, assignments, voxel_origin=voxel_origin,
+)
         print(f"  Slope bricks placed: {len(slope_bricks)}")
     else:
         slope_bricks = []
