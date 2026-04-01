@@ -412,11 +412,18 @@ def main():
     # Find all .glb assets (exclude the slope_detection dir itself if it's inside assets)
     # glob is not recursive by default so equal to assets/*.glb is fine.
     glb_files = sorted(ASSETS_DIR.glob("*.glb"))
+
+    # Also include assets/buildings/*.glb
+    buildings_dir = ASSETS_DIR / "buildings"
+    if buildings_dir.exists():
+        buildings_glb = sorted(buildings_dir.glob("*.glb"))
+        glb_files.extend(buildings_glb)
+
     if not glb_files:
         print(f"No .glb files found in {ASSETS_DIR}")
         sys.exit(1)
 
-    print(f"Found {len(glb_files)} models in {ASSETS_DIR}")
+    print(f"Found {len(glb_files)} models in {ASSETS_DIR} (including buildings)")
 
     slope_cfg = SlopeConfig(
         planar_deg_err=args.planar_deg_err,
