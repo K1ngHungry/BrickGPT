@@ -33,7 +33,10 @@ def run_baseline(mesh_path: str, resolution: int) -> dict:
 
 def run_deformed(mesh_path: str, resolution: int,
                  x_rotation: float = 90.0,
-                 cfg: SlopeConfig = None) -> dict:
+                 cfg: SlopeConfig = None,
+                 lambda_t: float = 5.0,
+                 lambda_p: float = 4.0,
+                 max_iter: int = 200) -> dict:
     """Deformation pipeline — detect slopes, deform, then standard voxel2brick."""
     if cfg is None:
         cfg = SlopeConfig()
@@ -70,20 +73,9 @@ def run_deformed(mesh_path: str, resolution: int,
     # Deformation (or just scale if no slopes)
     energy = 0.0
     if assignments:
-        result = deform_mesh(mesh, scale=optimal_scale, assignments=assignments, flat_planes=features.planes)
+        result = deform_mesh(mesh, scale=optimal_scale, assignments=assignments, flat_planes=features.planes,
+                           lambda_t=lambda_t, lambda_p=lambda_p, max_iter=max_iter)
         triangles = np.asarray(mesh.triangles)
-
-        # Diagnostic: compare deformed vs simply-scaled positions
-        scaled_verts = np.asarray(mesh.vertices) * optimal_scale
-        deformed_verts = result.deformed_vertices
-        displacement = deformed_verts - scaled_verts
-        disp_norms = np.linalg.norm(displacement, axis=1)
-        n_moved = np.sum(disp_norms > 1e-6)
-        print(f"  Split vertices (index+positional): {len(result.split_vertices)}")
-        print(f"  Flat planes: {len(result.flat_planes)}")
-        print(f"  Vertices moved: {n_moved}/{len(deformed_verts)}")
-        print(f"  Max displacement: {disp_norms.max():.4f}")
-        print(f"  Mean displacement (moved only): {disp_norms[disp_norms > 1e-6].mean():.4f}" if n_moved > 0 else "  No vertices moved")
 
         mesh = o3d.geometry.TriangleMesh()
         mesh.vertices = o3d.utility.Vector3dVector(result.deformed_vertices)
@@ -123,11 +115,65 @@ def run_deformed(mesh_path: str, resolution: int,
 
     # Slope tiling: place slope bricks first, then regular bricks on remainder
     if assignments:
+        print(f"\n  SLOPE TILING DIAGNOSTICS:")
+        print(f"  {'='*56}")
         voxel_origin = np.asarray(voxel_grid.origin)
+
+        # Add detailed tiling diagnostics
+        from mesh2brick.slopes.tiling import _slope_direction_to_rotation, _physical_footprint, _region_voxel_bounds
+
+        for region_idx, (region, matched_bricks) in enumerate(assignments):
+            best_brick = min(matched_bricks, key=lambda b: b['length'] * b['width'])
+            brick_l, brick_w, brick_h = best_brick['length'], best_brick['width'], best_brick['height']
+            rotation = _slope_direction_to_rotation(region.slope_direction)
+            foot_x, foot_y = _physical_footprint(brick_l, brick_w, rotation)
+
+            x_min, x_max, y_min, y_max, z_min, z_max = _region_voxel_bounds(mesh, region, voxel_origin)
+
+            # Check actual voxel density in this region
+            region_voxels = voxels[x_min:x_max+1, y_min:y_max+1, z_min:z_max+1]
+            voxels_in_region = region_voxels.sum()
+            region_volume = (x_max - x_min + 1) * (y_max - y_min + 1) * (z_max - z_min + 1)
+            density = voxels_in_region / region_volume if region_volume > 0 else 0
+
+            run = brick_l - 1 if brick_h == 3 and brick_l > 1 else brick_l
+            step_x, step_y = _physical_footprint(run, brick_w, rotation)
+
+            n_x = max(1, round((x_max - x_min + 1) / step_x))
+            n_y = max(1, round((y_max - y_min + 1) / step_y))
+            n_z = max(1, round((z_max - z_min + 1) / brick_h))
+
+            if region.slope_direction in (0, 2):
+                n_z = min(n_z, n_x)
+            else:
+                n_z = min(n_z, n_y)
+
+            expected_bricks = n_x * n_y * n_z if region.slope_direction in (0, 2) else n_x * n_y * n_z
+
+            print(f"  Region {region_idx}: dir={region.slope_direction}, brick={brick_l}x{brick_w}x{brick_h}")
+            print(f"    Voxel bounds: x=[{x_min},{x_max}], y=[{y_min},{y_max}], z=[{z_min},{z_max}]")
+            print(f"    Voxels: {voxels_in_region}/{region_volume} (density={density:.2%})")
+            print(f"    Grid: {n_x}x{n_y}x{n_z} = ~{expected_bricks} candidate bricks")
+
         slope_bricks, remaining_voxels = place_slope_bricks(
             voxels, mesh, assignments, voxel_origin=voxel_origin,
 )
-        print(f"  Slope bricks placed: {len(slope_bricks)}")
+        print(f"\n  {'='*56}")
+        print(f"  Total slope bricks placed: {len(slope_bricks)}")
+        print(f"  Voxels remaining: {remaining_voxels.sum()} / {voxels.sum()}")
+
+        # Check for voxel-level overlaps between slope bricks
+        slope_voxel_grid = np.zeros(world_dim, dtype=np.uint8)
+        overlap_count = 0
+        for brick in slope_bricks:
+            if slope_voxel_grid[brick.slice].any():
+                overlap_count += 1
+            slope_voxel_grid[brick.slice] = 1
+
+        if overlap_count > 0:
+            print(f"  WARNING: {overlap_count} slope bricks have voxel-level overlaps")
+        else:
+            print(f"  No slope brick overlaps")
     else:
         slope_bricks = []
         remaining_voxels = voxels
@@ -190,6 +236,14 @@ def main():
                         help=f"Max angular difference for BFS grouping (default {_defaults.normal_deg_err})")
     parser.add_argument("--min-area-fraction", type=float, default=_defaults.min_area_fraction,
                         help=f"Minimum region area as fraction of total mesh area (default {_defaults.min_area_fraction})")
+
+    # Deformation parameters
+    parser.add_argument("--lambda-t", type=float, default=5.0,
+                        help="Split vertex coupling weight (default 5.0, lower = more angle freedom)")
+    parser.add_argument("--lambda-p", type=float, default=4.0,
+                        help="Planarity constraint weight (default 4.0, lower = better angles)")
+    parser.add_argument("--max-iter", type=int, default=200,
+                        help="Deformation optimizer max iterations (default 200)")
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir)
@@ -204,7 +258,8 @@ def main():
         normal_deg_err=args.normal_deg_err,
         min_area_fraction=args.min_area_fraction
     )
-    deformed = run_deformed(args.mesh, args.resolution, x_rotation=args.x_rotation, cfg=cfg)
+    deformed = run_deformed(args.mesh, args.resolution, x_rotation=args.x_rotation, cfg=cfg,
+                          lambda_t=args.lambda_t, lambda_p=args.lambda_p, max_iter=args.max_iter)
 
     # Print comparison
     print()
