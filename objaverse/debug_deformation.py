@@ -36,7 +36,8 @@ def run_deformed(mesh_path: str, resolution: int,
                  cfg: SlopeConfig = None,
                  lambda_t: float = 5.0,
                  lambda_p: float = 4.0,
-                 max_iter: int = 200) -> dict:
+                 max_iter: int = 200,
+                 verbose: bool = False) -> dict:
     """Deformation pipeline — detect slopes, deform, then standard voxel2brick."""
     if cfg is None:
         cfg = SlopeConfig()
@@ -50,11 +51,12 @@ def run_deformed(mesh_path: str, resolution: int,
 
     features = detect_features(mesh, planar_deg_err=cfg.planar_deg_err,
                                normal_deg_err=cfg.normal_deg_err,
-                               min_area_fraction=cfg.min_area_fraction)
+                               min_area_fraction=cfg.min_area_fraction,
+                               verbose=verbose)
     regions = features.regions
-    from mesh2brick.slopes.detection import iso_to_voxel_angle, match_slope_to_bricks
+    from mesh2brick.slopes.detection import mesh_angle_to_voxel_angle, match_slope_to_bricks
     for i, region in enumerate(regions):
-        voxel_angle = iso_to_voxel_angle(region.slope_angle)
+        voxel_angle = mesh_angle_to_voxel_angle(region.slope_angle)
         matched = match_slope_to_bricks(voxel_angle)
         s_min = None
         if matched and region.length > 0 and region.width > 0:
@@ -120,13 +122,13 @@ def run_deformed(mesh_path: str, resolution: int,
         voxel_origin = np.asarray(voxel_grid.origin)
 
         # Add detailed tiling diagnostics
-        from mesh2brick.slopes.tiling import _slope_direction_to_rotation, _physical_footprint, _region_voxel_bounds
+        from mesh2brick.slopes.tiling import _slope_direction_to_rotation, _rotated_dim, _region_voxel_bounds
 
         for region_idx, (region, matched_bricks) in enumerate(assignments):
             best_brick = min(matched_bricks, key=lambda b: b['length'] * b['width'])
             brick_l, brick_w, brick_h = best_brick['length'], best_brick['width'], best_brick['height']
             rotation = _slope_direction_to_rotation(region.slope_direction)
-            foot_x, foot_y = _physical_footprint(brick_l, brick_w, rotation)
+            dim_x, dim_y = _rotated_dim(brick_l, brick_w, rotation)
 
             x_min, x_max, y_min, y_max, z_min, z_max = _region_voxel_bounds(mesh, region, voxel_origin)
 
@@ -137,7 +139,7 @@ def run_deformed(mesh_path: str, resolution: int,
             density = voxels_in_region / region_volume if region_volume > 0 else 0
 
             run = brick_l - 1 if brick_h == 3 and brick_l > 1 else brick_l
-            step_x, step_y = _physical_footprint(run, brick_w, rotation)
+            step_x, step_y = _rotated_dim(run, brick_w, rotation)
 
             n_x = max(1, round((x_max - x_min + 1) / step_x))
             n_y = max(1, round((y_max - y_min + 1) / step_y))
@@ -156,7 +158,7 @@ def run_deformed(mesh_path: str, resolution: int,
             print(f"    Grid: {n_x}x{n_y}x{n_z} = ~{expected_bricks} candidate bricks")
 
         slope_bricks, remaining_voxels = place_slope_bricks(
-            voxels, mesh, assignments, voxel_origin=voxel_origin,
+            voxels, mesh, assignments, voxel_origin=voxel_origin, verbose=verbose,
 )
         print(f"\n  {'='*56}")
         print(f"  Total slope bricks placed: {len(slope_bricks)}")
@@ -244,6 +246,8 @@ def main():
                         help="Planarity constraint weight (default 4.0, lower = better angles)")
     parser.add_argument("--max-iter", type=int, default=200,
                         help="Deformation optimizer max iterations (default 200)")
+    parser.add_argument("-v", "--verbose", action="store_true",
+                        help="Enable verbose diagnostic output")
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir)
@@ -259,7 +263,8 @@ def main():
         min_area_fraction=args.min_area_fraction
     )
     deformed = run_deformed(args.mesh, args.resolution, x_rotation=args.x_rotation, cfg=cfg,
-                          lambda_t=args.lambda_t, lambda_p=args.lambda_p, max_iter=args.max_iter)
+                          lambda_t=args.lambda_t, lambda_p=args.lambda_p, max_iter=args.max_iter,
+                          verbose=args.verbose)
 
     # Print comparison
     print()
