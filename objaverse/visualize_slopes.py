@@ -25,7 +25,7 @@ import open3d as o3d
 
 from mesh2brick.mesh2brick import normalize_mesh
 from mesh2brick.slopes import prepare_slopes, SlopeConfig
-from mesh2brick.slopes.detection import get_slope_bricks, match_slope_to_bricks, iso_to_voxel_angle
+from mesh2brick.slopes.detection import get_slope_bricks, match_slope_to_bricks, mesh_angle_to_voxel_angle
 
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
@@ -82,7 +82,7 @@ def process_mesh(
 
     region_info = []
     for region in regions:
-        voxel_angle = iso_to_voxel_angle(region.slope_angle)
+        voxel_angle = mesh_angle_to_voxel_angle(region.angle)
         matches = match_slope_to_bricks(voxel_angle, slope_bricks)
         best = matches[0] if matches else None
         
@@ -95,8 +95,8 @@ def process_mesh(
         region_info.append({
             "faces": len(region.face_indices),
             "area": region.area,
-            "angle": region.slope_angle,
-            "direction": region.slope_direction,
+            "angle": region.angle,
+            "direction": region.direction,
             "length": region.length,
             "width": region.width,
             "best_brick": best,
@@ -112,7 +112,7 @@ def process_mesh(
     face_colors[sloped_mask] = DARK_GRAY
 
     for region in regions:
-        color = DIRECTION_COLORS[region.slope_direction]
+        color = DIRECTION_COLORS[region.direction]
         for fi in region.face_indices:
             face_colors[fi] = color
 
@@ -365,8 +365,8 @@ def generate_html(results: list[dict], output_path: Path, params: dict):
 </head>
 <body>
 <h1>Slope Detection Results</h1>
-<div class="params">min_area_fraction={params['min_area_fraction']}, normal_deg_err={params['normal_deg_err']}&deg;,
-    planar_deg_err={params['planar_deg_err']}&deg;, x_rotation={params['x_rotation']}&deg;</div>
+<div class="params">min_area={params['min_area']}, normal_err={params['normal_err']}&deg;,
+    planar_err={params['planar_err']}&deg;, x_rotation={params['x_rotation']}&deg;</div>
 <div class="summary"><b>{summary_total}</b> models &mdash;
     <b>{summary_with_slopes}</b> with slopes &mdash;
     <b>{summary_total_regions}</b> total regions</div>
@@ -394,12 +394,12 @@ def main():
     parser.add_argument("--x-rotation", type=float, default=90.0,
                         help="X rotation in degrees (default: 90)")
     _defaults = SlopeConfig()
-    parser.add_argument("--min-area-fraction", type=float, default=_defaults.min_area_fraction,
-                        help=f"Min region area as fraction of total mesh area (default: {_defaults.min_area_fraction})")
-    parser.add_argument("--normal-deg-err", type=float, default=_defaults.normal_deg_err,
-                        help=f"Max normal angle diff for BFS grouping in degrees (default: {_defaults.normal_deg_err})")
-    parser.add_argument("--planar-deg-err", type=float, default=_defaults.planar_deg_err,
-                        help=f"Faces within this angle of horizontal/vertical are excluded (default: {_defaults.planar_deg_err})")
+    parser.add_argument("--min-area", type=float, default=_defaults.min_area,
+                        help=f"Min region area as fraction of total mesh area (default: {_defaults.min_area})")
+    parser.add_argument("--normal-err", type=float, default=_defaults.normal_err,
+                        help=f"Max normal angle diff for BFS grouping in degrees (default: {_defaults.normal_err})")
+    parser.add_argument("--planar-err", type=float, default=_defaults.planar_err,
+                        help=f"Faces within this angle of horizontal/vertical are excluded (default: {_defaults.planar_err})")
     args = parser.parse_args()
 
     output_path = Path(args.output).resolve() if args.output else SCRIPT_DIR / "results" / "slope_gallery.html"
@@ -426,9 +426,9 @@ def main():
     print(f"Found {len(glb_files)} models in {ASSETS_DIR} (including buildings)")
 
     slope_cfg = SlopeConfig(
-        planar_deg_err=args.planar_deg_err,
-        normal_deg_err=args.normal_deg_err,
-        min_area_fraction=args.min_area_fraction,
+        planar_err=args.planar_err,
+        normal_err=args.normal_err,
+        min_area=args.min_area,
     )
 
     results = []
@@ -449,9 +449,9 @@ def main():
         results.append(result)
 
     generate_html(results, output_path, {
-        "min_area_fraction": args.min_area_fraction,
-        "normal_deg_err": args.normal_deg_err,
-        "planar_deg_err": args.planar_deg_err,
+        "min_area": args.min_area,
+        "normal_err": args.normal_err,
+        "planar_err": args.planar_err,
         "x_rotation": args.x_rotation,
         "mesh_dir": mesh_output_dir,
     })

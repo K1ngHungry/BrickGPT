@@ -15,7 +15,10 @@ import numpy as np
 import open3d as o3d
 
 from mesh2brick.mesh2brick import Mesh2Brick, normalize_mesh
-from mesh2brick.slopes import detect_features, compute_optimal_scale, deform_mesh, apply_scale, place_slope_bricks, SlopeConfig
+from mesh2brick.slopes import prepare_slopes, place_slope_bricks, SlopeConfig
+from mesh2brick.slopes.detection import mesh_angle_to_voxel_angle, match_slope_to_bricks
+from mesh2brick.data.brick_structure import SlopeBrick, _SLOPE_DIR_TO_ROTATION
+from mesh2brick.slopes.utils import slope_run
 from mesh2brick.voxel2brick import voxel2brick
 
 
@@ -34,9 +37,6 @@ def run_baseline(mesh_path: str, resolution: int) -> dict:
 def run_deformed(mesh_path: str, resolution: int,
                  x_rotation: float = 90.0,
                  cfg: SlopeConfig = None,
-                 lambda_t: float = 5.0,
-                 lambda_p: float = 4.0,
-                 max_iter: int = 200,
                  verbose: bool = False) -> dict:
     """Deformation pipeline — detect slopes, deform, then standard voxel2brick."""
     if cfg is None:
@@ -49,59 +49,31 @@ def run_deformed(mesh_path: str, resolution: int,
     mesh = o3d.io.read_triangle_mesh(mesh_path)
     mesh = normalize_mesh(mesh, x_rotation=x_rotation)
 
-    features = detect_features(mesh, planar_deg_err=cfg.planar_deg_err,
-                               normal_deg_err=cfg.normal_deg_err,
-                               min_area_fraction=cfg.min_area_fraction,
-                               verbose=verbose)
-    regions = features.regions
-    from mesh2brick.slopes.detection import mesh_angle_to_voxel_angle, match_slope_to_bricks
+    slope_result = prepare_slopes(mesh, resolution=resolution, cfg=cfg)
+    mesh = slope_result.mesh
+    regions = slope_result.regions
+    assignments = slope_result.assignments
+    optimal_scale = slope_result.scale
+    world_dim = slope_result.world_dim
+    energy = slope_result.deformation.final_energy if slope_result.deformation else 0.0
+
+    # Print per-region diagnostics
     for i, region in enumerate(regions):
-        voxel_angle = mesh_angle_to_voxel_angle(region.slope_angle)
+        voxel_angle = mesh_angle_to_voxel_angle(region.angle)
         matched = match_slope_to_bricks(voxel_angle)
         s_min = None
         if matched and region.length > 0 and region.width > 0:
             s_min = min(max(b['length'] / region.length, b['width'] / region.width) for b in matched)
-        
-        print(f"  Region {i}: dir={region.slope_direction}, iso_angle={region.slope_angle:.1f}°, "
+        print(f"  Region {i}: dir={region.direction}, iso_angle={region.angle:.1f}°, "
               f"voxel_angle={voxel_angle:.1f}°, length={region.length:.3f}, width={region.width:.3f}, "
               f"s_min={s_min}, matched_angles={[b['angle'] for b in matched[:3]]}")
-    optimal_scale, assignments = compute_optimal_scale(
-        regions, default_scale=resolution,
-    )
-    s = int(optimal_scale)
     print(f"  Regions: {len(regions)}, Assignments: {len(assignments)}, "
           f"Scale: {optimal_scale:.1f}")
-
-    # Deformation (or just scale if no slopes)
-    energy = 0.0
-    if assignments:
-        result = deform_mesh(mesh, scale=optimal_scale, assignments=assignments, flat_planes=features.planes,
-                           lambda_t=lambda_t, lambda_p=lambda_p, max_iter=max_iter)
-        triangles = np.asarray(mesh.triangles)
-
-        mesh = o3d.geometry.TriangleMesh()
-        mesh.vertices = o3d.utility.Vector3dVector(result.deformed_vertices)
-        mesh.triangles = o3d.utility.Vector3iVector(triangles)
-        mesh.compute_vertex_normals()
-        energy = result.final_energy
+    if energy > 0:
         print(f"  Deformation energy: {energy:.4f}")
-    else:
-        mesh = apply_scale(mesh, optimal_scale)
+    elif not assignments:
         print("  No slopes — using apply_scale only")
-
-    # Z-scale for plate height compensation
-    vertices = np.asarray(mesh.vertices)
-    vertices[:, 2] *= 3.0
-    mesh.vertices = o3d.utility.Vector3dVector(vertices)
-
-    # Recompute world_dim from actual mesh bounds (deformation can expand it)
-    extent = np.asarray(mesh.get_max_bound()) - np.asarray(mesh.get_min_bound())
-    world_dim = (
-        max(s, int(np.ceil(extent[0]))),
-        max(s, int(np.ceil(extent[1]))),
-        max(s * 3, int(np.ceil(extent[2]))),
-    )
-    print(f"  Adjusted world dim: {world_dim}")
+    print(f"  World dim: {world_dim}")
 
     # Voxelize directly at voxel_size=1.0
     voxel_grid = o3d.geometry.VoxelGrid.create_from_triangle_mesh(mesh, 1.0)
@@ -121,14 +93,13 @@ def run_deformed(mesh_path: str, resolution: int,
         print(f"  {'='*56}")
         voxel_origin = np.asarray(voxel_grid.origin)
 
-        # Add detailed tiling diagnostics
-        from mesh2brick.slopes.tiling import _slope_direction_to_rotation, _rotated_dim, _region_voxel_bounds
+        from mesh2brick.slopes.tiling import _region_voxel_bounds
 
         for region_idx, (region, matched_bricks) in enumerate(assignments):
             best_brick = min(matched_bricks, key=lambda b: b['length'] * b['width'])
             brick_l, brick_w, brick_h = best_brick['length'], best_brick['width'], best_brick['height']
-            rotation = _slope_direction_to_rotation(region.slope_direction)
-            dim_x, dim_y = _rotated_dim(brick_l, brick_w, rotation)
+            rotation = _SLOPE_DIR_TO_ROTATION[region.direction]
+            dim_x, dim_y = SlopeBrick.rotated_dim(brick_l, brick_w, rotation)
 
             x_min, x_max, y_min, y_max, z_min, z_max = _region_voxel_bounds(mesh, region, voxel_origin)
 
@@ -138,21 +109,21 @@ def run_deformed(mesh_path: str, resolution: int,
             region_volume = (x_max - x_min + 1) * (y_max - y_min + 1) * (z_max - z_min + 1)
             density = voxels_in_region / region_volume if region_volume > 0 else 0
 
-            run = brick_l - 1 if brick_h == 3 and brick_l > 1 else brick_l
-            step_x, step_y = _rotated_dim(run, brick_w, rotation)
+            run = slope_run(brick_l, brick_h)
+            step_x, step_y = SlopeBrick.rotated_dim(run, brick_w, rotation)
 
             n_x = max(1, round((x_max - x_min + 1) / step_x))
             n_y = max(1, round((y_max - y_min + 1) / step_y))
             n_z = max(1, round((z_max - z_min + 1) / brick_h))
 
-            if region.slope_direction in (0, 2):
+            if region.direction in (0, 2):
                 n_z = min(n_z, n_x)
             else:
                 n_z = min(n_z, n_y)
 
-            expected_bricks = n_x * n_y * n_z if region.slope_direction in (0, 2) else n_x * n_y * n_z
+            expected_bricks = n_x * n_y * n_z if region.direction in (0, 2) else n_x * n_y * n_z
 
-            print(f"  Region {region_idx}: dir={region.slope_direction}, brick={brick_l}x{brick_w}x{brick_h}")
+            print(f"  Region {region_idx}: dir={region.direction}, brick={brick_l}x{brick_w}x{brick_h}")
             print(f"    Voxel bounds: x=[{x_min},{x_max}], y=[{y_min},{y_max}], z=[{z_min},{z_max}]")
             print(f"    Voxels: {voxels_in_region}/{region_volume} (density={density:.2%})")
             print(f"    Grid: {n_x}x{n_y}x{n_z} = ~{expected_bricks} candidate bricks")
@@ -232,20 +203,13 @@ def main():
                         help="X rotation in degrees (default 90.0)")
     
     _defaults = SlopeConfig()
-    parser.add_argument("--planar-deg-err", type=float, default=_defaults.planar_deg_err,
-                        help=f"Faces within this angle of horizontal/vertical are excluded (default {_defaults.planar_deg_err})")
-    parser.add_argument("--normal-deg-err", type=float, default=_defaults.normal_deg_err,
-                        help=f"Max angular difference for BFS grouping (default {_defaults.normal_deg_err})")
-    parser.add_argument("--min-area-fraction", type=float, default=_defaults.min_area_fraction,
-                        help=f"Minimum region area as fraction of total mesh area (default {_defaults.min_area_fraction})")
+    parser.add_argument("--planar-err", type=float, default=_defaults.planar_err,
+                        help=f"Faces within this angle of horizontal/vertical are excluded (default {_defaults.planar_err})")
+    parser.add_argument("--normal-err", type=float, default=_defaults.normal_err,
+                        help=f"Max angular difference for BFS grouping (default {_defaults.normal_err})")
+    parser.add_argument("--min-area", type=float, default=_defaults.min_area,
+                        help=f"Minimum region area as fraction of total mesh area (default {_defaults.min_area})")
 
-    # Deformation parameters
-    parser.add_argument("--lambda-t", type=float, default=5.0,
-                        help="Split vertex coupling weight (default 5.0, lower = more angle freedom)")
-    parser.add_argument("--lambda-p", type=float, default=4.0,
-                        help="Planarity constraint weight (default 4.0, lower = better angles)")
-    parser.add_argument("--max-iter", type=int, default=200,
-                        help="Deformation optimizer max iterations (default 200)")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="Enable verbose diagnostic output")
     args = parser.parse_args()
@@ -258,12 +222,11 @@ def main():
     baseline = run_baseline(args.mesh, args.resolution)
     print()
     cfg = SlopeConfig(
-        planar_deg_err=args.planar_deg_err,
-        normal_deg_err=args.normal_deg_err,
-        min_area_fraction=args.min_area_fraction
+        planar_err=args.planar_err,
+        normal_err=args.normal_err,
+        min_area=args.min_area,
     )
     deformed = run_deformed(args.mesh, args.resolution, x_rotation=args.x_rotation, cfg=cfg,
-                          lambda_t=args.lambda_t, lambda_p=args.lambda_p, max_iter=args.max_iter,
                           verbose=args.verbose)
 
     # Print comparison
