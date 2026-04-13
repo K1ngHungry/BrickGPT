@@ -30,7 +30,7 @@ def _process_with_slopes(file_path: Path, resolution: int):
     mesh = normalize_mesh(mesh, x_rotation=90.0)
 
     # Slope detection and deformation
-    cfg = SlopeConfig(planar_err=10.0, normal_err=1.0, min_area=0.01)
+    cfg = SlopeConfig()
     slope_result = prepare_slopes(mesh, resolution=resolution, cfg=cfg)
 
     # Log slope detection results

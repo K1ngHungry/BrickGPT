@@ -8,7 +8,9 @@ Usage:
     uv run python objaverse/debug_deformation.py <path.glb> -o output_dir --resolution 20
 """
 import argparse
+import math
 import time
+from collections import deque
 from pathlib import Path
 
 import numpy as np
@@ -18,8 +20,159 @@ from mesh2brick.mesh2brick import Mesh2Brick, normalize_mesh
 from mesh2brick.slopes import prepare_slopes, place_slope_bricks, SlopeConfig
 from mesh2brick.slopes.detection import mesh_angle_to_voxel_angle, match_slope_to_bricks
 from mesh2brick.data.brick_structure import SlopeBrick, _SLOPE_DIR_TO_ROTATION
-from mesh2brick.slopes.utils import slope_run
+from mesh2brick.slopes.utils import (
+    build_face_adjacency, compute_areas, normal_angle_diff,
+    to_cardinal, compute_region_bounds, slope_run,
+)
 from mesh2brick.voxel2brick import voxel2brick
+
+
+def diagnose_slope_detection(
+    mesh: o3d.geometry.TriangleMesh,
+    cfg: SlopeConfig,
+) -> None:
+    """Replicate detect_features' slope grouping, print every group's fate.
+
+    Mirrors the logic in detection.detect_features so that every slope
+    group (accepted or rejected) is printed with the specific filter that
+    killed it. Used to diagnose why so few regions are being detected.
+    """
+    print("\n  SLOPE DETECTION DIAGNOSTICS:")
+    print(f"  {'='*56}")
+
+    mesh.compute_triangle_normals()
+    normals = np.asarray(mesh.triangle_normals)
+    triangles = np.asarray(mesh.triangles)
+
+    if len(triangles) == 0:
+        print("  (empty mesh)")
+        return
+
+    face_areas = compute_areas(mesh)
+    total_area = float(face_areas.sum())
+    if total_area == 0:
+        print("  (zero-area mesh)")
+        return
+
+    cos_angles = np.abs(normals[:, 2])
+    angle_from_horiz = np.degrees(np.arccos(np.clip(cos_angles, 0, 1)))
+    is_sloped = (angle_from_horiz > cfg.planar_err) & (angle_from_horiz < 90 - cfg.planar_err)
+    sloped_faces = set(np.where(is_sloped)[0])
+    n_total = len(triangles)
+    n_sloped = len(sloped_faces)
+    n_flat = int((angle_from_horiz <= cfg.planar_err).sum())
+    n_vertical = int((angle_from_horiz >= 90 - cfg.planar_err).sum())
+
+    print(f"  Total faces: {n_total}  "
+          f"(flat: {n_flat}, vertical: {n_vertical}, sloped candidates: {n_sloped})")
+    print(f"  Total area: {total_area:.4f}  "
+          f"min_area threshold: {cfg.min_area*total_area:.4f} "
+          f"(= {cfg.min_area:.1%} of total)")
+    print(f"  BFS normal_err: {cfg.normal_err:.1f}°")
+
+    if not sloped_faces:
+        print("  No sloped faces found.")
+        return
+
+    # BFS grouping — exactly mirrors detection.py logic
+    adjacency_slopes = build_face_adjacency(triangles, sloped_faces)
+    visited_slopes: set[int] = set()
+    slope_groups: list[list[int]] = []
+
+    for start_face in sloped_faces:
+        if start_face in visited_slopes:
+            continue
+        queue = deque([start_face])
+        visited_slopes.add(start_face)
+        group = []
+        while queue:
+            face = queue.popleft()
+            group.append(face)
+            for neighbor in adjacency_slopes.get(face, []):
+                if neighbor not in visited_slopes:
+                    if normal_angle_diff(normals[start_face], normals[neighbor]) < cfg.normal_err:
+                        visited_slopes.add(neighbor)
+                        queue.append(neighbor)
+        slope_groups.append(group)
+
+    print(f"  BFS produced {len(slope_groups)} connected slope groups\n")
+
+    # Sort groups by area descending so the biggest (most likely to be slopes) print first
+    groups_by_area = sorted(
+        enumerate(slope_groups),
+        key=lambda p: -float(face_areas[p[1]].sum()),
+    )
+
+    n_accepted = 0
+    rejection_counts: dict[str, int] = {}
+
+    for gi, group in groups_by_area:
+        group_areas = face_areas[group]
+        region_area = float(group_areas.sum())
+        area_frac = region_area / total_area
+
+        status = "ACCEPT"
+        reason = ""
+        extra = ""
+
+        # Filter 1: area threshold
+        if region_area < cfg.min_area * total_area:
+            status = "REJECT"
+            reason = "area_too_small"
+            extra = (f"area={region_area:.4f} ({area_frac:.2%}) "
+                     f"< min={cfg.min_area*total_area:.4f} ({cfg.min_area:.1%})")
+        else:
+            weighted_normals = normals[group] * group_areas[:, np.newaxis]
+            avg_normal = weighted_normals.sum(axis=0)
+            norm = float(np.linalg.norm(avg_normal))
+            if norm < 1e-10:
+                status = "REJECT"
+                reason = "degenerate_normal"
+                extra = f"sum of weighted normals has zero length"
+            else:
+                avg_normal = avg_normal / norm
+                if avg_normal[2] < 0:
+                    status = "REJECT"
+                    reason = "downward_facing"
+                    extra = f"n_z={avg_normal[2]:+.3f}"
+                else:
+                    slope_angle = math.degrees(math.acos(min(abs(avg_normal[2]), 1.0)))
+                    direction = np.array([avg_normal[0], avg_normal[1]])
+                    if float(np.linalg.norm(direction)) < 1e-10:
+                        status = "REJECT"
+                        reason = "no_xy_direction"
+                        extra = f"avg_normal nearly vertical (n_z={avg_normal[2]:+.3f})"
+                    else:
+                        slope_direction = to_cardinal(direction)
+                        length, width, height = compute_region_bounds(
+                            mesh, group, slope_direction)
+                        if length < 0.05 or width < 0.05:
+                            status = "REJECT"
+                            reason = "degenerate_bounds"
+                            extra = f"length={length:.4f}, width={width:.4f}"
+                        else:
+                            extra = (
+                                f"angle={slope_angle:.1f}° "
+                                f"normal=({avg_normal[0]:+.3f},{avg_normal[1]:+.3f},{avg_normal[2]:+.3f}) "
+                                f"dir={slope_direction} length={length:.3f} width={width:.3f}"
+                            )
+                            n_accepted += 1
+
+        if status == "REJECT":
+            rejection_counts[reason] = rejection_counts.get(reason, 0) + 1
+        print(f"    [{status}] group {gi}: n_faces={len(group)} "
+              f"area={region_area:.4f} ({area_frac:.2%})")
+        if status == "REJECT":
+            print(f"              reason={reason}: {extra}")
+        else:
+            print(f"              {extra}")
+
+    print(f"\n  Summary: {n_accepted} accepted, "
+          f"{len(slope_groups) - n_accepted} rejected")
+    if rejection_counts:
+        by_reason = ", ".join(f"{k}={v}" for k, v in sorted(rejection_counts.items()))
+        print(f"  Rejection breakdown: {by_reason}")
+    print(f"  {'='*56}")
 
 
 def run_baseline(mesh_path: str, resolution: int) -> dict:
@@ -49,6 +202,9 @@ def run_deformed(mesh_path: str, resolution: int,
     mesh = o3d.io.read_triangle_mesh(mesh_path)
     mesh = normalize_mesh(mesh, x_rotation=x_rotation)
 
+    # Pre-deformation diagnostics: explain why each slope group is accepted/rejected
+    diagnose_slope_detection(mesh, cfg)
+
     slope_result = prepare_slopes(mesh, resolution=resolution, cfg=cfg)
     mesh = slope_result.mesh
     regions = slope_result.regions
@@ -58,6 +214,13 @@ def run_deformed(mesh_path: str, resolution: int,
     energy = slope_result.deformation.final_energy if slope_result.deformation else 0.0
 
     # Print per-region diagnostics
+    # Note: regions were detected on the pre-deformation mesh, but `mesh` here
+    # is the deformed mesh. Triangle indices are preserved by prepare_slopes,
+    # so face_indices still refer to the same faces.
+    mesh.compute_triangle_normals()
+    deformed_face_normals = np.asarray(mesh.triangle_normals)
+    _cardinals = np.array([[1, 0], [0, 1], [-1, 0], [0, -1]], dtype=float)
+    _cardinal_names = ["+X", "+Y", "-X", "-Y"]
     for i, region in enumerate(regions):
         voxel_angle = mesh_angle_to_voxel_angle(region.angle)
         matched = match_slope_to_bricks(voxel_angle)
@@ -67,6 +230,48 @@ def run_deformed(mesh_path: str, resolution: int,
         print(f"  Region {i}: dir={region.direction}, iso_angle={region.angle:.1f}°, "
               f"voxel_angle={voxel_angle:.1f}°, length={region.length:.3f}, width={region.width:.3f}, "
               f"s_min={s_min}, matched_angles={[b['angle'] for b in matched[:3]]}")
+
+        # Raw average XY normal and cardinal fit (region.avg_normal is pre-deformation)
+        xy = region.avg_normal[:2]
+        xy_norm = float(np.linalg.norm(xy))
+        xy_unit = xy / xy_norm if xy_norm > 1e-10 else xy
+        dots = _cardinals @ xy_unit
+        best_idx = int(np.argmax(dots))
+        cardinal_fit = float(dots[best_idx])
+        misalign_deg = float(np.degrees(np.arccos(np.clip(cardinal_fit, -1.0, 1.0))))
+        print(f"    avg_normal=({region.avg_normal[0]:+.3f}, {region.avg_normal[1]:+.3f}, "
+              f"{region.avg_normal[2]:+.3f})  xy_unit=({xy_unit[0]:+.3f}, {xy_unit[1]:+.3f})  "
+              f"nearest={_cardinal_names[best_idx]}  cardinal_fit={cardinal_fit:.3f}  "
+              f"misalign={misalign_deg:.1f}°")
+
+        # Per-face normal spread on the DEFORMED mesh
+        # (if deformation warped the surface, face normals will no longer cluster)
+        face_normals = deformed_face_normals[region.face_indices]
+        if len(face_normals) > 0:
+            mean_n = face_normals.mean(axis=0)
+            mean_n /= np.linalg.norm(mean_n) + 1e-12
+            face_dots = face_normals @ mean_n
+            face_angles = np.degrees(np.arccos(np.clip(face_dots, -1.0, 1.0)))
+            # Also compute pre-deformation face normal spread (faces in original mesh)
+            max_dev = float(face_angles.max())
+            mean_dev = float(face_angles.mean())
+            std_dev = float(face_angles.std())
+            # Fraction of faces within 5° of the mean (well-clustered)
+            clustered_frac = float((face_angles < 5.0).mean())
+
+            # Deformed XY direction
+            mean_xy = mean_n[:2]
+            mean_xy_norm = float(np.linalg.norm(mean_xy))
+            mean_xy_unit = mean_xy / mean_xy_norm if mean_xy_norm > 1e-10 else mean_xy
+            dots_d = _cardinals @ mean_xy_unit
+            d_fit = float(dots_d.max())
+            d_misalign = float(np.degrees(np.arccos(np.clip(d_fit, -1.0, 1.0))))
+
+            print(f"    n_faces={len(face_normals)}  "
+                  f"deformed_mean_n=({mean_n[0]:+.3f}, {mean_n[1]:+.3f}, {mean_n[2]:+.3f})  "
+                  f"deformed_cardinal_fit={d_fit:.3f}  deformed_misalign={d_misalign:.1f}°")
+            print(f"    face_normal_spread: max={max_dev:.1f}°  mean={mean_dev:.1f}°  "
+                  f"std={std_dev:.1f}°  within_5°={clustered_frac:.1%}")
     print(f"  Regions: {len(regions)}, Assignments: {len(assignments)}, "
           f"Scale: {optimal_scale:.1f}")
     if energy > 0:
