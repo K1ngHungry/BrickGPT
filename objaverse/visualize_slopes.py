@@ -48,14 +48,51 @@ def process_mesh(
     x_rotation: float,
     slope_cfg: SlopeConfig,
     glb_output_dir: Path,
+    png_path: Path | None = None,
+    metrics: dict | None = None,
+    run_detection: bool = False,
+    results_dir: Path | None = None,
 ) -> dict:
     """Process one mesh: detect slopes, color it, export GLB, return results."""
     name = mesh_path.stem
     short_name = name[:8]
 
+    result = {
+        "name": name,
+        "short_name": short_name,
+    }
+
+    # Add PNG render path if available
+    if png_path:
+        result["png_filename"] = png_path.name
+
+    # Add metrics if available
+    if metrics:
+        result["metrics"] = metrics
+
+    # If not running detection, return early with basic info
+    if not run_detection:
+        mesh = o3d.io.read_triangle_mesh(str(mesh_path))
+        if len(mesh.triangles) == 0:
+            result["error"] = "Failed to load mesh"
+            return result
+
+        result["n_faces"] = len(mesh.triangles)
+        result["n_horiz"] = 0
+        result["n_vert"] = 0
+        result["n_sloped"] = 0
+        result["n_regions"] = 0
+        result["n_assigned"] = 0
+        result["optimal_scale"] = metrics.get("scale", 20) if metrics else 20
+        result["regions"] = []
+        result["original_glb_path"] = mesh_path
+        return result
+
+    # Run detection mode below
     mesh = o3d.io.read_triangle_mesh(str(mesh_path))
     if len(mesh.triangles) == 0:
-        return {"name": name, "short_name": short_name, "error": "Failed to load mesh"}
+        result["error"] = "Failed to load mesh"
+        return result
 
     mesh = normalize_mesh(mesh, x_rotation=x_rotation)
     mesh.compute_triangle_normals()
@@ -167,9 +204,7 @@ def process_mesh(
         except Exception as e:
             deform_info = {"error": str(e)}
 
-    return {
-        "name": name,
-        "short_name": short_name,
+    result.update({
         "glb_filename": glb_filename,
         "deformed_glb_filename": deformed_glb_filename,
         "n_faces": n_faces,
@@ -181,18 +216,29 @@ def process_mesh(
         "optimal_scale": optimal_scale,
         "deform_info": deform_info,
         "regions": region_info,
-    }
+    })
+
+    return result
 
 
 def generate_html(results: list[dict], output_path: Path, params: dict):
     """Generate an interactive HTML gallery."""
-    # Sort: models with most regions first
-    results_sorted = sorted(results, key=lambda r: r.get("n_regions", 0), reverse=True)
+    # Sort: models with most regions first (or most bricks if no regions)
+    results_sorted = sorted(results, key=lambda r: (
+        r.get("n_regions", 0),
+        r.get("metrics", {}).get("total_bricks", 0)
+    ), reverse=True)
 
     mesh_dir = params.get("mesh_dir")
+    results_dir = params.get("results_dir")
+
     rel_mesh_dir = ""
     if mesh_dir:
         rel_mesh_dir = os.path.relpath(mesh_dir, output_path.parent)
+
+    rel_results_dir = ""
+    if results_dir:
+        rel_results_dir = os.path.relpath(results_dir, output_path.parent)
 
     cards = []
     for r in results_sorted:
@@ -238,7 +284,53 @@ def generate_html(results: list[dict], output_path: Path, params: dict):
         if not r["regions"]:
             region_rows = '<tr><td colspan="8" class="empty">No slope regions detected</td></tr>'
 
-        src_url = f"{rel_mesh_dir}/{r['glb_filename']}" if mesh_dir else r['glb_filename']
+        # Original GLB viewer (always shown)
+        # If detection was run, show colored GLB from mesh_output_dir
+        # Otherwise, show original GLB from assets_dir
+        original_viewer = ""
+        if "glb_filename" in r:
+            # Detection mode: show colored GLB
+            src_url = f"{rel_mesh_dir}/{r['glb_filename']}" if mesh_dir else r['glb_filename']
+            original_viewer = f"""
+                <div class="viewer-container">
+                    <div class="viewer-label">Original (colored)</div>
+                    <model-viewer
+                        src="{src_url}"
+                        camera-controls
+                        auto-rotate
+                        shadow-intensity="0.5"
+                        environment-image="neutral"
+                        interaction-prompt="none"
+                        style="width:100%;height:100%">
+                    </model-viewer>
+                </div>"""
+        elif "original_glb_path" in r:
+            # Default mode: show original GLB from assets
+            original_path = r["original_glb_path"]
+            rel_original = os.path.relpath(original_path, output_path.parent)
+            original_viewer = f"""
+                <div class="viewer-container">
+                    <div class="viewer-label">Original</div>
+                    <model-viewer
+                        src="{rel_original}"
+                        camera-controls
+                        auto-rotate
+                        shadow-intensity="0.5"
+                        environment-image="neutral"
+                        interaction-prompt="none"
+                        style="width:100%;height:100%">
+                    </model-viewer>
+                </div>"""
+
+        # Build PNG render viewer if available
+        png_viewer = ""
+        if r.get("png_filename"):
+            png_url = f"{rel_results_dir}/{r['png_filename']}" if results_dir else r['png_filename']
+            png_viewer = f"""
+                <div class="viewer-container">
+                    <div class="viewer-label">Legolized</div>
+                    <img src="{png_url}" alt="LEGO render" style="width:100%;height:100%;object-fit:contain;">
+                </div>"""
 
         # Build deformation viewer + stats if available
         deform_viewer = ""
@@ -275,6 +367,24 @@ def generate_html(results: list[dict], output_path: Path, params: dict):
         elif di and "error" in di:
             deform_stats = f'<p class="error-msg" style="font-size:0.8em">Deform error: {di["error"]}</p>'
 
+        # Build metrics display if available
+        metrics_html = ""
+        if r.get("metrics"):
+            m = r["metrics"]
+            slope_pct = (m.get('slope_bricks', 0) / m.get('total_bricks', 1)) * 100 if m.get('total_bricks') else 0
+            metrics_html = f"""
+                    <div class="metrics-stats">
+                        <h3>Build Metrics</h3>
+                        <table>
+                            <tr><td>Time</td><td>{m.get('time', '?'):.2f} s</td></tr>
+                            <tr><td>Total bricks</td><td>{m.get('total_bricks', '?')}</td></tr>
+                            <tr><td>Slope bricks</td><td>{m.get('slope_bricks', 0)} ({slope_pct:.1f}%)</td></tr>
+                            <tr><td>Components</td><td>{m.get('connected_components', '?')}</td></tr>
+                            <tr><td>Voxels</td><td>{m.get('voxels', '?')}</td></tr>
+                            <tr><td>Stability</td><td>{m.get('stability', '?'):.3f}</td></tr>
+                        </table>
+                    </div>"""
+
         cards.append(f"""
         <div class="card">
             <div class="card-header">
@@ -284,26 +394,9 @@ def generate_html(results: list[dict], output_path: Path, params: dict):
                 <span class="region-count">{r['n_regions']} slope(s), scale={r.get('optimal_scale', 20):.0f}</span>
             </div>
             <div class="card-body">
-                <div class="viewer-container">
-                    <div class="viewer-label">Original</div>
-                    <model-viewer
-                        src="{src_url}"
-                        camera-controls
-                        auto-rotate
-                        shadow-intensity="0.5"
-                        environment-image="neutral"
-                        interaction-prompt="none"
-                        style="width:100%;height:100%">
-                    </model-viewer>
-                </div>{deform_viewer}
+                {original_viewer}{deform_viewer}{png_viewer}
                 <div class="details">
-                    <h3>Slope Regions</h3>
-                    <table>
-                        <thead>
-                            <tr><th>#</th><th>Faces</th><th>Angle</th><th>Dir</th><th>Best Brick</th><th>s_min</th><th>Studs</th><th>Status</th></tr>
-                        </thead>
-                        <tbody>{region_rows}</tbody>
-                    </table>{deform_stats}
+                    {"<h3>Slope Regions</h3><table><thead><tr><th>#</th><th>Faces</th><th>Angle</th><th>Dir</th><th>Best Brick</th><th>s_min</th><th>Studs</th><th>Status</th></tr></thead><tbody>" + region_rows + "</tbody></table>" if r.get("regions") else ""}{deform_stats}{metrics_html}
                     <p class="uid-full" title="{r['name']}">{r['name']}</p>
                 </div>
             </div>
@@ -339,10 +432,13 @@ def generate_html(results: list[dict], output_path: Path, params: dict):
     .region-count {{ font-size: 0.85em; background: rgba(255,255,255,0.15); padding: 3px 10px;
                      border-radius: 4px; }}
     .card-body {{ display: flex; gap: 0; }}
-    .viewer-container {{ flex: 0 0 320px; height: 400px; background: #fafafa; position: relative; }}
+    .viewer-container {{ flex: 0 0 280px; height: 400px; background: #fafafa; position: relative; }}
     .viewer-label {{ position: absolute; top: 8px; left: 8px; z-index: 1; background: rgba(0,0,0,0.5);
                      color: white; padding: 2px 8px; border-radius: 3px; font-size: 0.75em; }}
-    .details {{ flex: 1; padding: 16px; overflow-x: auto; }}
+    .details {{ flex: 1; padding: 16px; overflow-x: auto; min-width: 300px; }}
+    .metrics-stats {{ margin-top: 12px; }}
+    .metrics-stats h3 {{ font-size: 0.95em; margin: 0 0 6px; }}
+    .metrics-stats table {{ font-size: 0.8em; }}
     .details h3 {{ margin: 0 0 10px; font-size: 1em; }}
     table {{ width: 100%; border-collapse: collapse; font-size: 0.85em; }}
     th {{ background: #f5f5f5; padding: 6px 10px; text-align: left; border-bottom: 2px solid #ddd; }}
@@ -387,10 +483,98 @@ def generate_html(results: list[dict], output_path: Path, params: dict):
     print(f"\nGallery written to {output_path}")
 
 
+def parse_logs(log_path: Path) -> dict:
+    """Parse logs.txt and return dict mapping uid -> metrics."""
+    import re
+
+    # Regex patterns
+    CONVERTING_PATTERN = re.compile(r"Converting ([a-f0-9]+)\.glb")
+    SLOPE_DETECTION_PATTERN = re.compile(r"Slope detection: (\d+) regions, (\d+) assignments, scale=([\d\.]+)")
+    DEFORMATION_PATTERN = re.compile(r"Deformation energy: ([\d\.]+)")
+    VOXELS_PATTERN = re.compile(r"Voxelized: (\d+) filled voxels")
+    SLOPE_BRICKS_PATTERN = re.compile(r"Slope bricks placed: (\d+)")
+    FINISHED_PATTERN = re.compile(r"Finished in time: ([\d\.]+) s \| "
+                                  r"# bricks: (\d+) \| "
+                                  r"# connected components: (\d+) \| "
+                                  r"# min connected components possible: (\d+) \| "
+                                  r"Stability: ([\d\.]+)")
+
+    metrics = {}
+
+    if not log_path.exists():
+        return metrics
+
+    with open(log_path, 'r') as f:
+        lines = f.readlines()
+
+    current_uid = None
+    current_data = {}
+
+    for line in lines:
+        # Check for new conversion start
+        conv_match = CONVERTING_PATTERN.search(line)
+        if conv_match:
+            current_uid = conv_match.group(1)
+            current_data = {}
+            continue
+
+        if not current_uid:
+            continue
+
+        # Parse slope detection
+        slope_match = SLOPE_DETECTION_PATTERN.search(line)
+        if slope_match:
+            current_data['regions'] = int(slope_match.group(1))
+            current_data['assignments'] = int(slope_match.group(2))
+            current_data['scale'] = float(slope_match.group(3))
+            continue
+
+        # Parse deformation energy
+        deform_match = DEFORMATION_PATTERN.search(line)
+        if deform_match:
+            current_data['deformation_energy'] = float(deform_match.group(1))
+            continue
+
+        # Parse voxel count
+        voxels_match = VOXELS_PATTERN.search(line)
+        if voxels_match:
+            current_data['voxels'] = int(voxels_match.group(1))
+            continue
+
+        # Parse slope bricks
+        slope_bricks_match = SLOPE_BRICKS_PATTERN.search(line)
+        if slope_bricks_match:
+            current_data['slope_bricks'] = int(slope_bricks_match.group(1))
+            continue
+
+        # Parse finished line
+        fin_match = FINISHED_PATTERN.search(line)
+        if fin_match:
+            time_val, bricks, comps, min_comps, stability = fin_match.groups()
+            current_data['time'] = float(time_val)
+            current_data['total_bricks'] = int(bricks)
+            current_data['connected_components'] = int(comps)
+            current_data['min_components'] = int(min_comps)
+            current_data['stability'] = float(stability)
+
+            # Store metrics for this model
+            metrics[current_uid] = current_data
+            current_uid = None
+            current_data = {}
+
+    return metrics
+
+
 def main():
     parser = argparse.ArgumentParser(description="Slope detection gallery for objaverse assets")
     parser.add_argument("-o", "--output", default=None,
                         help="Output HTML path (default: objaverse/slope_gallery.html)")
+    parser.add_argument("--assets-dir", type=str, default=None,
+                        help="Directory containing .glb files (default: assets/buildings)")
+    parser.add_argument("--results-dir", type=str, default=None,
+                        help="Directory containing .png renders and logs.txt (default: assets/slope_buildings)")
+    parser.add_argument("-s", "--run-detection", action="store_true",
+                        help="Re-run slope detection on GLB files")
     parser.add_argument("--x-rotation", type=float, default=90.0,
                         help="X rotation in degrees (default: 90)")
     _defaults = SlopeConfig()
@@ -405,25 +589,22 @@ def main():
     output_path = Path(args.output).resolve() if args.output else SCRIPT_DIR / "results" / "slope_gallery.html"
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Mesh output directory
+    # Set up directories
+    assets_dir = Path(args.assets_dir).resolve() if args.assets_dir else ASSETS_DIR / "buildings"
+    results_dir = Path(args.results_dir).resolve() if args.results_dir else ASSETS_DIR / "slope_buildings"
+
+    # Mesh output directory (for colored meshes when -s flag is used)
     mesh_output_dir = ASSETS_DIR / "slope_detection"
     mesh_output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Find all .glb assets (exclude the slope_detection dir itself if it's inside assets)
-    # glob is not recursive by default so equal to assets/*.glb is fine.
-    glb_files = sorted(ASSETS_DIR.glob("*.glb"))
-
-    # Also include assets/buildings/*.glb
-    buildings_dir = ASSETS_DIR / "buildings"
-    if buildings_dir.exists():
-        buildings_glb = sorted(buildings_dir.glob("*.glb"))
-        glb_files.extend(buildings_glb)
+    # Find all .glb assets
+    glb_files = sorted(assets_dir.glob("*.glb"))
 
     if not glb_files:
-        print(f"No .glb files found in {ASSETS_DIR}")
+        print(f"No .glb files found in {assets_dir}")
         sys.exit(1)
 
-    print(f"Found {len(glb_files)} models in {ASSETS_DIR} (including buildings)")
+    print(f"Found {len(glb_files)} models in {assets_dir}")
 
     slope_cfg = SlopeConfig(
         planar_err=args.planar_err,
@@ -431,21 +612,48 @@ def main():
         min_area=args.min_area,
     )
 
+    # Parse logs once
+    logs_data = parse_logs(results_dir / "logs.txt")
+
     results = []
     for i, glb_path in enumerate(glb_files, 1):
-        short = glb_path.stem[:8]
+        uid = glb_path.stem
+        short = uid[:8]
         print(f"[{i}/{len(glb_files)}] {short}...", end=" ", flush=True)
+
+        # Find corresponding PNG render
+        png_path = results_dir / f"{uid}.png"
+        png_path = png_path if png_path.exists() else None
+
+        # Get metrics for this model
+        metrics_data = logs_data.get(uid)
+
         result = process_mesh(
             glb_path,
             x_rotation=args.x_rotation,
             slope_cfg=slope_cfg,
             glb_output_dir=mesh_output_dir,
+            png_path=png_path,
+            metrics=metrics_data,
+            run_detection=args.run_detection,
+            results_dir=results_dir,
         )
-        n_regions = result.get("n_regions", 0)
-        scale = result.get("optimal_scale", 20)
-        n_assigned = result.get("n_assigned", 0)
-        print(f"{result.get('n_faces', 0)} faces, {n_regions} regions "
-              f"({n_assigned} assigned), scale={scale:.0f}")
+
+        # Print progress based on mode
+        if args.run_detection:
+            n_regions = result.get("n_regions", 0)
+            scale = result.get("optimal_scale", 20)
+            n_assigned = result.get("n_assigned", 0)
+            print(f"{result.get('n_faces', 0)} faces, {n_regions} regions "
+                  f"({n_assigned} assigned), scale={scale:.0f}")
+        else:
+            if metrics_data:
+                print(f"{result.get('n_faces', 0)} faces, "
+                      f"{metrics_data.get('total_bricks', '?')} bricks, "
+                      f"{metrics_data.get('slope_bricks', 0)} slopes")
+            else:
+                print(f"{result.get('n_faces', 0)} faces (no metrics)")
+
         results.append(result)
 
     generate_html(results, output_path, {
@@ -454,6 +662,7 @@ def main():
         "planar_err": args.planar_err,
         "x_rotation": args.x_rotation,
         "mesh_dir": mesh_output_dir,
+        "results_dir": results_dir,
     })
 
 

@@ -20,12 +20,16 @@ FINISHED_PATTERN = re.compile(r"Finished in time: ([\d\.]+) s \| "
 
 import argparse
 
-def parse_logs(target_resolutions=None):
+def parse_logs(target_resolutions=None, assets_dir=None, results_dir=None):
+    # Use provided directories or fall back to defaults
+    _assets_dir = assets_dir if assets_dir is not None else ASSETS_DIR
+    _results_dir = results_dir if results_dir is not None else RESULTS_DIR
+
     model_data = defaultdict(dict) # {uid: {config_name: stats}}
     all_configs = set()
 
     # Pre-populate model_data with all glb files found in assets
-    glb_files = sorted(glob.glob(os.path.join(ASSETS_DIR, '*.glb')))
+    glb_files = sorted(glob.glob(os.path.join(str(_assets_dir), '*.glb')))
     for g in glb_files:
         filename = os.path.basename(g)
         uid = os.path.splitext(filename)[0]
@@ -34,7 +38,7 @@ def parse_logs(target_resolutions=None):
         _ = model_data[short_uid]
 
     # Find all config directories
-    config_dirs = glob.glob(os.path.join(ASSETS_DIR, 'res_*'))
+    config_dirs = glob.glob(os.path.join(str(_results_dir), 'res_*'))
     
     for config_dir in config_dirs:
         dir_name = os.path.basename(config_dir)
@@ -345,12 +349,18 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Generate comparison metrics HTML.')
     parser.add_argument('--resolutions', nargs='+', type=int, default=None, help='Filter by specific resolutions (e.g., 20 50)')
     parser.add_argument('-o', '--output', type=str, default=None, help='Output HTML file path. Defaults to objaverse/comparison_metrics.html')
+    parser.add_argument('--assets-dir', type=str, default=None, help='Assets directory containing .glb files (default: assets/)')
+    parser.add_argument('--results-dir', type=str, default=None, help='Results directory containing logs and config folders (default: results/)')
     args = parser.parse_args()
 
-    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    output_path = args.output if args.output else str(RESULTS_DIR / 'comparison_metrics.html')
+    # Set directories from args or use defaults
+    assets_dir = Path(args.assets_dir).resolve() if args.assets_dir else ASSETS_DIR
+    results_dir = Path(args.results_dir).resolve() if args.results_dir else RESULTS_DIR
 
-    data, configs = parse_logs(target_resolutions=args.resolutions)
+    results_dir.mkdir(parents=True, exist_ok=True)
+    output_path = args.output if args.output else str(results_dir / 'comparison_metrics.html')
+
+    data, configs = parse_logs(target_resolutions=args.resolutions, assets_dir=assets_dir, results_dir=results_dir)
     html_content = generate_html(data, configs)
 
     with open(output_path, 'w') as f:

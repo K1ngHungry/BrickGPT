@@ -245,18 +245,24 @@ def main():
     parser = argparse.ArgumentParser(description='Generate comparison gallery.')
     parser.add_argument('--resolutions', nargs='+', type=int, default=None, help='Filter by specific resolutions (e.g., 20 50)')
     parser.add_argument('-o', '--output', type=str, default=None, help='Output HTML file path. Defaults to gallery.html in script directory.')
+    parser.add_argument('--assets-dir', type=str, default=None, help='Assets directory containing .glb files (default: assets/)')
+    parser.add_argument('--results-dir', type=str, default=None, help='Results directory containing .ldr and .png files (default: results/)')
     args = parser.parse_args()
 
-    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    # Set directories from args or use defaults
+    assets_dir = Path(args.assets_dir).resolve() if args.assets_dir else ASSETS_DIR
+    results_dir = Path(args.results_dir).resolve() if args.results_dir else RESULTS_DIR
+
+    results_dir.mkdir(parents=True, exist_ok=True)
     if args.output:
         output_path = Path(args.output).resolve()
     else:
-        output_path = RESULTS_DIR / "gallery.html"
+        output_path = results_dir / "gallery.html"
 
     output_dir = output_path.parent
 
-    if not ASSETS_DIR.exists():
-        print(f"Error: assets directory not found at {ASSETS_DIR}")
+    if not assets_dir.exists():
+        print(f"Error: assets directory not found at {assets_dir}")
         return
 
     # 1. Get Metrics and Configs using update_metrics logic
@@ -268,14 +274,14 @@ def main():
         print("Error: Could not import parse_logs from update_metrics.py. Make sure you are running from the project root or objaverse directory.")
         return
 
-    model_stats, configs = parse_logs(target_resolutions=args.resolutions)
-    
+    model_stats, configs = parse_logs(target_resolutions=args.resolutions, results_dir=results_dir)
+
     # 2. Build Models Dict (GLB + Renders)
     # models = { 'uid': { 'glb': path, 'renders': {config_id: png_path} } }
     models = {}
-    
+
     # Find GLBs
-    glb_files = list(ASSETS_DIR.glob("*.glb"))
+    glb_files = list(assets_dir.glob("*.glb"))
     print(f"Found {len(glb_files)} source GLB files.")
     for glb in glb_files:
         uid = glb.stem
@@ -284,7 +290,7 @@ def main():
     # Find Renders for each config
     for conf in configs:
         cid = conf['id']
-        conf_dir = ASSETS_DIR / cid
+        conf_dir = assets_dir / cid
         if not conf_dir.exists():
             continue
             
