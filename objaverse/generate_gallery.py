@@ -274,28 +274,37 @@ def main():
         print("Error: Could not import parse_logs from update_metrics.py. Make sure you are running from the project root or objaverse directory.")
         return
 
-    model_stats, configs = parse_logs(target_resolutions=args.resolutions, results_dir=results_dir)
+    # parse_logs expects:
+    # - assets_dir: directory containing logs.txt and PNG files (the results directory)
+    # - meshes_dir: directory containing GLB files
+    # - results_dir: output directory (not used by parse_logs)
+    model_stats, configs = parse_logs(
+        target_resolutions=args.resolutions,
+        assets_dir=str(results_dir),  # Where logs.txt and PNGs are
+        meshes_dir=str(assets_dir),   # Where GLB files are
+        results_dir=str(results_dir)
+    )
 
     # 2. Build Models Dict (GLB + Renders)
     # models = { 'uid': { 'glb': path, 'renders': {config_id: png_path} } }
     models = {}
 
-    # Find GLBs in meshes directory
-    meshes_dir = SCRIPT_DIR / "meshes"
-    glb_files = list(meshes_dir.glob("*.glb"))
+    # Find GLBs in assets_dir (which we're using as meshes_dir)
+    glb_files = list(assets_dir.glob("*.glb"))
+    if not glb_files:
+        # Fallback to meshes subdirectory
+        meshes_dir = SCRIPT_DIR / "meshes"
+        glb_files = list(meshes_dir.glob("*.glb"))
     print(f"Found {len(glb_files)} source GLB files.")
     for glb in glb_files:
         uid = glb.stem
         models[uid] = {'glb': glb, 'renders': {}}
 
-    # Find Renders for each config
+    # Find Renders - PNGs should be in the same directory as logs.txt (results_dir)
     for conf in configs:
         cid = conf['id']
-        conf_dir = assets_dir / cid
-        if not conf_dir.exists():
-            continue
-            
-        png_files = list(conf_dir.glob("*.png"))
+        # PNGs are in results_dir, not in subdirectories
+        png_files = list(results_dir.glob("*.png"))
         for png in png_files:
             uid = png.stem
             if uid in models:

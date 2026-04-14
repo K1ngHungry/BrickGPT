@@ -30,6 +30,7 @@ from mesh2brick.voxel2brick import voxel2brick
 def diagnose_slope_detection(
     mesh: o3d.geometry.TriangleMesh,
     cfg: SlopeConfig,
+    verbose: bool = False,
 ) -> None:
     """Replicate detect_features' slope grouping, print every group's fate.
 
@@ -160,12 +161,13 @@ def diagnose_slope_detection(
 
         if status == "REJECT":
             rejection_counts[reason] = rejection_counts.get(reason, 0) + 1
-        print(f"    [{status}] group {gi}: n_faces={len(group)} "
-              f"area={region_area:.4f} ({area_frac:.2%})")
-        if status == "REJECT":
-            print(f"              reason={reason}: {extra}")
-        else:
-            print(f"              {extra}")
+        if verbose:
+            print(f"    [{status}] group {gi}: n_faces={len(group)} "
+                  f"area={region_area:.4f} ({area_frac:.2%})")
+            if status == "REJECT":
+                print(f"              reason={reason}: {extra}")
+            else:
+                print(f"              {extra}")
 
     print(f"\n  Summary: {n_accepted} accepted, "
           f"{len(slope_groups) - n_accepted} rejected")
@@ -202,8 +204,18 @@ def run_deformed(mesh_path: str, resolution: int,
     mesh = o3d.io.read_triangle_mesh(mesh_path)
     mesh = normalize_mesh(mesh, x_rotation=x_rotation)
 
+    # Apply Z-scaling to match what prepare_slopes does internally
+    vertices = np.asarray(mesh.vertices)
+    vertices[:, 2] *= 3.0
+    mesh.vertices = o3d.utility.Vector3dVector(vertices)
+
     # Pre-deformation diagnostics: explain why each slope group is accepted/rejected
-    diagnose_slope_detection(mesh, cfg)
+    diagnose_slope_detection(mesh, cfg, verbose=verbose)
+
+    # Note: prepare_slopes will apply Z-scaling again, so we need to undo it first
+    vertices = np.asarray(mesh.vertices)
+    vertices[:, 2] /= 3.0
+    mesh.vertices = o3d.utility.Vector3dVector(vertices)
 
     slope_result = prepare_slopes(mesh, resolution=resolution, cfg=cfg)
     mesh = slope_result.mesh
