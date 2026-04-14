@@ -225,8 +225,9 @@ def run_deformed(mesh_path: str, resolution: int,
         voxel_angle = mesh_angle_to_voxel_angle(region.angle)
         matched = match_slope_to_bricks(voxel_angle)
         s_min = None
+        min_steps = 2  # Default from compute_optimal_scale
         if matched and region.length > 0 and region.width > 0:
-            s_min = min(max(b['length'] / region.length, b['width'] / region.width) for b in matched)
+            s_min = min(max(min_steps * b['length'] / region.length, b['width'] / region.width) for b in matched)
         print(f"  Region {i}: dir={region.direction}, iso_angle={region.angle:.1f}°, "
               f"voxel_angle={voxel_angle:.1f}°, length={region.length:.3f}, width={region.width:.3f}, "
               f"s_min={s_min}, matched_angles={[b['angle'] for b in matched[:3]]}")
