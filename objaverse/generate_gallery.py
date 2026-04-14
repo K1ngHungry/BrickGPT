@@ -280,8 +280,9 @@ def main():
     # models = { 'uid': { 'glb': path, 'renders': {config_id: png_path} } }
     models = {}
 
-    # Find GLBs
-    glb_files = list(assets_dir.glob("*.glb"))
+    # Find GLBs in meshes directory
+    meshes_dir = SCRIPT_DIR / "meshes"
+    glb_files = list(meshes_dir.glob("*.glb"))
     print(f"Found {len(glb_files)} source GLB files.")
     for glb in glb_files:
         uid = glb.stem

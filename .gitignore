@@ -35,5 +35,9 @@ wandb
 *.log
 objaverse/assets
 objaverse/results
+objaverse/meshes
+objaverse/building_meshes
 shapenet/assets
 shapenet/results
+
+HISTORY.md

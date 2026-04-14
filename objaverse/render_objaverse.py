@@ -7,14 +7,17 @@ SCRIPT_DIR = Path(__file__).parent.resolve()
 ASSETS_DIR = SCRIPT_DIR / "assets"
 
 
-def render_assets(force_all=False):
-    if not ASSETS_DIR.exists():
-        print(f"Error: directory not found at {ASSETS_DIR}")
+def render_assets(input_dir=None, force_all=False):
+    # Use provided directory or fall back to default
+    target_dir = Path(input_dir) if input_dir else ASSETS_DIR / "mesh_results"
+
+    if not target_dir.exists():
+        print(f"Error: directory not found at {target_dir}")
         return
 
-    # Find all .ldr files in res_* directories
-    ldr_files = sorted(list(ASSETS_DIR.rglob("res_*/*.ldr")))
-    print(f"Found {len(ldr_files)} LDR files in {ASSETS_DIR} to check for rendering.")
+    # Find all .ldr files in the target directory
+    ldr_files = sorted(list(target_dir.glob("*.ldr")))
+    print(f"Found {len(ldr_files)} LDR files in {target_dir.name} to check for rendering.")
 
     # Prepare environment with local ldraw library
     env = os.environ.copy()
@@ -54,7 +57,8 @@ def render_assets(force_all=False):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Render Objaverse LDR files to PNG.")
+    parser.add_argument("--input-dir", type=str, default=None, help="Directory containing .ldr files (default: assets/mesh_results)")
     parser.add_argument("--force", action="store_true", help="Force re-rendering of existing PNGs")
     args = parser.parse_args()
 
-    render_assets(force_all=args.force)
+    render_assets(input_dir=args.input_dir, force_all=args.force)
