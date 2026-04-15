@@ -12,7 +12,8 @@ import numpy as np
 import open3d as o3d
 
 # Add mesh2brick to path
-sys.path.insert(0, str(Path(__file__).parent.parent / 'src' / 'mesh2brick' / 'src'))
+# tools/analysis/ -> tools/ -> objaverse/ -> brickgpt/ -> src/mesh2brick/src
+sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / 'src' / 'mesh2brick' / 'src'))
 
 from mesh2brick.mesh2brick import normalize_mesh
 from mesh2brick.slopes import SlopeConfig, prepare_slopes

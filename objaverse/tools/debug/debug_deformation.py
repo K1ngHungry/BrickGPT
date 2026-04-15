@@ -411,9 +411,9 @@ def print_stats(result: dict) -> None:
 def main():
     parser = argparse.ArgumentParser(description="Debug: compare baseline vs deformed mesh2brick")
     parser.add_argument("mesh", nargs="?",
-                        default="objaverse/assets/8ccdacecef714a4bb1e7eaa7075695c7.glb",
+                        default="objaverse/data/meshes/general/8ccdacecef714a4bb1e7eaa7075695c7.glb",
                         help="Path to input GLB file")
-    parser.add_argument("-o", "--output-dir", default="objaverse/assets/slope_test/",
+    parser.add_argument("-o", "--output-dir", default="objaverse/experiments/slopes/test/",
                         help="Output directory for LDR files")
     parser.add_argument("--resolution", type=int, default=20,
                         help="Target resolution (default 20)")

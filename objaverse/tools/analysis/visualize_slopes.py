@@ -28,7 +28,7 @@ from mesh2brick.slopes import prepare_slopes, SlopeConfig
 from mesh2brick.slopes.detection import get_slope_bricks, match_slope_to_bricks, mesh_angle_to_voxel_angle
 
 
-SCRIPT_DIR = Path(__file__).parent.resolve()
+SCRIPT_DIR = Path(__file__).parent.parent.parent.resolve()  # tools/visualization/ -> objaverse/
 ASSETS_DIR = SCRIPT_DIR / "assets"
 
 DIRECTION_COLORS = {
@@ -590,11 +590,11 @@ def main():
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Set up directories
-    assets_dir = Path(args.assets_dir).resolve() if args.assets_dir else ASSETS_DIR / "buildings"
-    results_dir = Path(args.results_dir).resolve() if args.results_dir else ASSETS_DIR / "slope_buildings"
+    assets_dir = Path(args.assets_dir).resolve() if args.assets_dir else SCRIPT_DIR / "data" / "meshes" / "buildings"
+    results_dir = Path(args.results_dir).resolve() if args.results_dir else SCRIPT_DIR / "experiments" / "slopes" / "buildings"
 
     # Mesh output directory (for colored meshes when -s flag is used)
-    mesh_output_dir = ASSETS_DIR / "slope_detection"
+    mesh_output_dir = SCRIPT_DIR / "experiments" / "slopes" / "detection"
     mesh_output_dir.mkdir(parents=True, exist_ok=True)
 
     # Find all .glb assets

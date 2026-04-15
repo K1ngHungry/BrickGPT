@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 from multiprocessing import Process, Queue, Pipe
 
-SCRIPT_DIR = Path(__file__).parent
+SCRIPT_DIR = Path(__file__).parent.parent  # scripts/ -> objaverse/
 ASSETS_DIR = SCRIPT_DIR / "assets"
 
 

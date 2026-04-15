@@ -4,7 +4,7 @@ import argparse
 from pathlib import Path
 
 # Enhance sys.path to allow importing from the same directory
-SCRIPT_DIR = Path(__file__).parent.resolve()
+SCRIPT_DIR = Path(__file__).parent.parent.parent.resolve()  # tools/analysis/ -> objaverse/
 sys.path.append(str(SCRIPT_DIR))
 
 try:
@@ -293,7 +293,7 @@ def main():
     glb_files = list(assets_dir.glob("*.glb"))
     if not glb_files:
         # Fallback to meshes subdirectory
-        meshes_dir = SCRIPT_DIR / "meshes"
+        meshes_dir = SCRIPT_DIR / "data" / "meshes" / "general"
         glb_files = list(meshes_dir.glob("*.glb"))
     print(f"Found {len(glb_files)} source GLB files.")
     for glb in glb_files:

@@ -3,21 +3,19 @@ import subprocess
 from pathlib import Path
 import argparse
 
-SCRIPT_DIR = Path(__file__).parent.resolve()
+SCRIPT_DIR = Path(__file__).parent.parent.parent.resolve()  # tools/visualization/ -> objaverse/
 ASSETS_DIR = SCRIPT_DIR / "assets"
+SLOPE_BUILDINGS_DIR = SCRIPT_DIR / "experiments" / "slopes" / "buildings"
 
 
-def render_assets(input_dir=None, force_all=False):
-    # Use provided directory or fall back to default
-    target_dir = Path(input_dir) if input_dir else ASSETS_DIR / "mesh_results"
-
-    if not target_dir.exists():
-        print(f"Error: directory not found at {target_dir}")
+def render_slopes(force_all=False):
+    if not SLOPE_BUILDINGS_DIR.exists():
+        print(f"Error: directory not found at {SLOPE_BUILDINGS_DIR}")
         return
 
-    # Find all .ldr files in the target directory
-    ldr_files = sorted(list(target_dir.glob("*.ldr")))
-    print(f"Found {len(ldr_files)} LDR files in {target_dir.name} to check for rendering.")
+    # Find all .ldr files in slope_buildings directory
+    ldr_files = sorted(list(SLOPE_BUILDINGS_DIR.glob("*.ldr")))
+    print(f"Found {len(ldr_files)} LDR files in {SLOPE_BUILDINGS_DIR} to check for rendering.")
 
     # Prepare environment with local ldraw library
     env = os.environ.copy()
@@ -31,10 +29,10 @@ def render_assets(input_dir=None, force_all=False):
         png_path = ldr_path.with_suffix(".png")
 
         if png_path.exists() and not force_all:
-            print(f"[SKIP] {ldr_path.parent.name}/{png_path.name}")
+            print(f"[SKIP] {png_path.name}")
             continue
 
-        print(f"[RENDER] {ldr_path.parent.name}/{ldr_path.name}...")
+        print(f"[RENDER] {ldr_path.name}...")
 
         cmd = [
             "uv", "run", "render_bricks",
@@ -56,9 +54,8 @@ def render_assets(input_dir=None, force_all=False):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Render Objaverse LDR files to PNG.")
-    parser.add_argument("--input-dir", type=str, default=None, help="Directory containing .ldr files (default: assets/mesh_results)")
+    parser = argparse.ArgumentParser(description="Render slope buildings LDR files to PNG.")
     parser.add_argument("--force", action="store_true", help="Force re-rendering of existing PNGs")
     args = parser.parse_args()
 
-    render_assets(input_dir=args.input_dir, force_all=args.force)
+    render_slopes(force_all=args.force)

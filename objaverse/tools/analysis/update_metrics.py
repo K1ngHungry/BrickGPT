@@ -5,9 +5,9 @@ from collections import defaultdict
 
 from pathlib import Path
 
-SCRIPT_DIR = Path(__file__).parent
+SCRIPT_DIR = Path(__file__).parent.parent.parent  # tools/analysis/ -> objaverse/
 ASSETS_DIR = str(SCRIPT_DIR / 'assets')
-MESHES_DIR = str(SCRIPT_DIR / 'meshes')
+MESHES_DIR = str(SCRIPT_DIR / 'data' / 'meshes' / 'general')
 RESULTS_DIR = SCRIPT_DIR / 'results'
 
 # Regex patterns for line-by-line parsing
