@@ -33,11 +33,28 @@ ldraw/
 # Logs and wandb
 wandb
 *.log
-objaverse/assets
-objaverse/results
-objaverse/meshes
-objaverse/building_meshes
-shapenet/assets
-shapenet/results
+
+# Objaverse outputs and data
+objaverse/assets/
+objaverse/results/
+objaverse/experiments/
+objaverse/data/meshes/
+objaverse/data/glbs/
+objaverse/meshes/
+objaverse/building_meshes/
+
+# ShapeNet outputs
+shapenet/assets/
+shapenet/results/
+
+# Large output files
+*.ldr
+*.glb
+*.png
+*.txt
+# keep important config/doc files
+!README*.txt
+!requirements.txt
+!*.md
 
 HISTORY.md
