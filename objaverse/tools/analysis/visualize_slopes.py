@@ -567,14 +567,14 @@ def parse_logs(log_path: Path) -> dict:
 
 def main():
     parser = argparse.ArgumentParser(description="Slope detection gallery for objaverse assets")
-    parser.add_argument("-o", "--output", default=None,
-                        help="Output HTML path (default: objaverse/slope_gallery.html)")
-    parser.add_argument("--assets-dir", "-a", type=str, default=None,
-                        help="Directory containing .glb files (default: assets/buildings)")
-    parser.add_argument("--results-dir", type=str, default=None,
-                        help="Directory containing .png renders and logs.txt (default: assets/slope_buildings)")
+    parser.add_argument("-a", "--assets-dir", type=str, default=None,
+                        help="Directory containing .glb files (default: data/meshes/buildings)")
+    parser.add_argument("-o", "--output-dir", type=str, default=None,
+                        help="Output directory (default: results/)")
     parser.add_argument("-s", "--run-detection", action="store_true",
                         help="Re-run slope detection on GLB files")
+    parser.add_argument("--results-dir", type=str, default=None,
+                        help="Directory containing .png renders and logs.txt (default: experiments/slopes/buildings)")
     parser.add_argument("--x-rotation", type=float, default=90.0,
                         help="X rotation in degrees (default: 90)")
     _defaults = SlopeConfig()
@@ -586,8 +586,9 @@ def main():
                         help=f"Faces within this angle of horizontal/vertical are excluded (default: {_defaults.planar_err})")
     args = parser.parse_args()
 
-    output_path = Path(args.output).resolve() if args.output else SCRIPT_DIR / "results" / "slope_gallery.html"
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_dir = Path(args.output_dir).resolve() if args.output_dir else SCRIPT_DIR / "results"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / "slope_gallery.html"
 
     # Set up directories
     assets_dir = Path(args.assets_dir).resolve() if args.assets_dir else SCRIPT_DIR / "data" / "meshes" / "buildings"

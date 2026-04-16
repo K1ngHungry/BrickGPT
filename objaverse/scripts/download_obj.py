@@ -54,8 +54,8 @@ import argparse
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Download Objaverse assets from a CSV file.")
     parser.add_argument("-c", "--csv", required=True, help="Path to the CSV file containing UIDs")
-    parser.add_argument("-o", "--output-dir", default="assets", help="Directory to save downloaded assets (default: assets)")
     parser.add_argument("-n", "--max-count", type=int, default=None, help="Maximum number of models to download (default: no limit)")
+    parser.add_argument("-o", "--output-dir", default="assets", help="Directory to save downloaded assets (default: assets)")
 
     args = parser.parse_args()
 

@@ -21,23 +21,22 @@ FINISHED_PATTERN = re.compile(r"Finished in time: ([\d\.]+) s \| "
 
 import argparse
 
-def parse_logs(target_resolutions=None, assets_dir=None, results_dir=None, meshes_dir=None):
+def parse_logs(target_resolutions=None, assets_dir=None, meshes_dir=None):
     # Use provided directories or fall back to defaults
     _assets_dir = assets_dir if assets_dir is not None else ASSETS_DIR
-    _results_dir = results_dir if results_dir is not None else RESULTS_DIR
-    _meshes_dir = meshes_dir if meshes_dir is not None else MESHES_DIR
 
     model_data = defaultdict(dict) # {uid: {config_name: stats}}
     all_configs = {}  # {config_id: config_obj}
 
-    # Pre-populate model_data with all glb files found in meshes directory
-    glb_files = sorted(glob.glob(os.path.join(_meshes_dir, '*.glb')))
-    for g in glb_files:
-        filename = os.path.basename(g)
-        uid = os.path.splitext(filename)[0]
-        short_uid = uid[:8]
-        # Just accessing it creates the entry in defaultdict
-        _ = model_data[short_uid]
+    # Pre-populate model_data with all glb files found in meshes directory (if provided)
+    if meshes_dir:
+        glb_files = sorted(glob.glob(os.path.join(str(meshes_dir), '*.glb')))
+        for g in glb_files:
+            filename = os.path.basename(g)
+            uid = os.path.splitext(filename)[0]
+            short_uid = uid[:8]
+            # Just accessing it creates the entry in defaultdict
+            _ = model_data[short_uid]
 
     # Look for logs.txt directly in assets_dir
     log_path = os.path.join(str(_assets_dir), 'logs.txt')
@@ -334,19 +333,18 @@ def generate_html(model_data, sorted_configs):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Generate comparison metrics HTML.')
-    parser.add_argument('--resolutions', '-r', nargs='+', type=int, default=None, help='Filter by specific resolutions (e.g., 20 50)')
-    parser.add_argument('-o', '--output', type=str, default=None, help='Output HTML file path. Defaults to objaverse/comparison_metrics.html')
-    parser.add_argument('-c', '--compare', action='store_true', help='Compare mode: provide multiple --assets-dir paths')
-    parser.add_argument('--assets-dir', '-a', type=str, nargs='+', default=None, help='Assets directory containing logs.txt (can be multiple with -c)')
-    parser.add_argument('--meshes-dir', '-m', type=str, required=True, help='Directory containing .glb mesh files')
-    parser.add_argument('--results-dir', type=str, default=None, help='Results directory for output (default: results/)')
+    parser.add_argument('-a', '--assets-dir', type=str, nargs='+', default=None, help='Assets directory/directories containing logs.txt')
+    parser.add_argument('-m', '--meshes-dir', type=str, default=None, help='Directory containing .glb mesh files (optional: shows all models including failed)')
+    parser.add_argument('-o', '--output-dir', type=str, default=None, help='Output directory (default: results/)')
+    parser.add_argument('-r', '--resolutions', nargs='+', type=int, default=None, help='Filter by specific resolutions (e.g., 20 50)')
+    parser.add_argument('-c', '--compare', action='store_true', help='Compare mode: requires at least 2 --assets-dir paths')
     args = parser.parse_args()
 
     # Set directories from args or use defaults
-    meshes_dir = Path(args.meshes_dir).resolve()
-    results_dir = Path(args.results_dir).resolve() if args.results_dir else RESULTS_DIR
-    results_dir.mkdir(parents=True, exist_ok=True)
-    output_path = args.output if args.output else str(results_dir / 'comparison_metrics.html')
+    meshes_dir = Path(args.meshes_dir).resolve() if args.meshes_dir else None
+    output_dir = Path(args.output_dir).resolve() if args.output_dir else RESULTS_DIR
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = str(output_dir / 'comparison_metrics.html')
 
     # Handle compare mode with multiple assets directories
     if args.compare:
@@ -362,7 +360,6 @@ if __name__ == "__main__":
             data, configs = parse_logs(
                 target_resolutions=args.resolutions,
                 assets_dir=asset_dir,
-                results_dir=results_dir,
                 meshes_dir=meshes_dir
             )
 
@@ -382,7 +379,6 @@ if __name__ == "__main__":
         data, configs = parse_logs(
             target_resolutions=args.resolutions,
             assets_dir=assets_dir,
-            results_dir=results_dir,
             meshes_dir=meshes_dir
         )
         html_content = generate_html(data, configs)
