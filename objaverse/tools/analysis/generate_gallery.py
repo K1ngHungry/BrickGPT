@@ -243,9 +243,9 @@ def generate_html(models, configs, model_stats, output_dir):
 
 def main():
     parser = argparse.ArgumentParser(description='Generate comparison gallery.')
-    parser.add_argument('--resolutions', nargs='+', type=int, default=None, help='Filter by specific resolutions (e.g., 20 50)')
+    parser.add_argument('--resolutions', '-r', nargs='+', type=int, default=None, help='Filter by specific resolutions (e.g., 20 50)')
     parser.add_argument('-o', '--output', type=str, default=None, help='Output HTML file path. Defaults to gallery.html in script directory.')
-    parser.add_argument('--assets-dir', type=str, default=None, help='Assets directory containing .glb files (default: assets/)')
+    parser.add_argument('--assets-dir', '-a', type=str, default=None, help='Assets directory containing .glb files (default: assets/)')
     parser.add_argument('--results-dir', type=str, default=None, help='Results directory containing .ldr and .png files (default: results/)')
     args = parser.parse_args()
 

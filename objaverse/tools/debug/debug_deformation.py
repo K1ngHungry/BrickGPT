@@ -415,7 +415,7 @@ def main():
                         help="Path to input GLB file")
     parser.add_argument("-o", "--output-dir", default="objaverse/experiments/slopes/test/",
                         help="Output directory for LDR files")
-    parser.add_argument("--resolution", type=int, default=20,
+    parser.add_argument("--resolution", "-r", type=int, default=20,
                         help="Target resolution (default 20)")
     parser.add_argument("--x-rotation", type=float, default=90.0,
                         help="X rotation in degrees (default 90.0)")

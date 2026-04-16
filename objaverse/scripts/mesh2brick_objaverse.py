@@ -181,12 +181,12 @@ def convert_objaverse_assets(resolution: int, output_dir: str = None, timeout: i
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Convert Objaverse assets to LEGO bricks.")
-    parser.add_argument("--resolution", "-r", type=int, default=20, help="Voxel resolution (default: 20)")
-    parser.add_argument("--assets-dir", "-a", type=str, default=None, help="Input directory containing .glb files (default: assets/)")
-    parser.add_argument("--output-dir", "-o", type=str, default=None, help="Output directory (default: assets/res_<resolution>)")
-    parser.add_argument("--timeout", "-t", type=int, default=None, help="Timeout in seconds per file (default: no timeout)")
+    parser.add_argument("--resolution", type=int, default=20, help="Voxel resolution (default: 20)")
+    parser.add_argument("--assets-dir", type=str, default=None, help="Input directory containing .glb files (default: assets/)")
+    parser.add_argument("--output_dir", type=str, default=None, help="Output directory (default: assets/res_<resolution>)")
+    parser.add_argument("--timeout", type=int, default=None, help="Timeout in seconds per file (default: no timeout)")
     parser.add_argument("--enable-slopes", action="store_true", default=True, help="Enable slope detection and brick placement (default: True)")
-    parser.add_argument("--disable-slopes", "-ds", action="store_true", help="Disable slopes (use baseline pipeline only)")
+    parser.add_argument("--disable-slopes", action="store_true", help="Disable slopes (use baseline pipeline only)")
     args = parser.parse_args()
 
     enable_slopes = args.enable_slopes and not args.disable_slopes
