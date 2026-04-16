@@ -26,6 +26,7 @@ gurobi.log
 ldraw/
 
 *.csv
+.claude/
 
 # Output Artifacts (LDraw/Results)
 !LICENSE
@@ -33,7 +34,29 @@ ldraw/
 # Logs and wandb
 wandb
 *.log
-objaverse/assets
-objaverse/results
-shapenet/assets
-shapenet/results
+
+# Objaverse outputs and data
+objaverse/assets/
+objaverse/results/
+objaverse/experiments/
+objaverse/data/meshes/
+objaverse/data/glbs/
+objaverse/meshes/
+objaverse/building_meshes/
+
+# ShapeNet outputs
+shapenet/assets/
+shapenet/results/
+
+# Large output files
+*.ldr
+*.glb
+*.png
+*.txt
+# keep important config/doc files
+!README*.txt
+!requirements.txt
+!*.md
+
+HISTORY.md
+key.txt

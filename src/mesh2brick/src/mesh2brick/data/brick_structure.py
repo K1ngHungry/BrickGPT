@@ -1,3 +1,4 @@
+import math
 import re
 import warnings
 from dataclasses import dataclass
@@ -6,7 +7,7 @@ import networkx as nx
 import numpy as np
 
 from mesh2brick.data.brick_library import (brick_library, dimensions_to_brick_id, brick_id_to_dimensions,
-                                           brick_id_to_part_id, part_id_to_brick_id)
+                                           brick_id_to_part_id, part_id_to_brick_id, brick_id_to_type)
 from mesh2brick.stability_analysis.stability_analysis import StabilityConfig, stability_score
 
 
@@ -15,24 +16,27 @@ class Brick:
     """
     Represents a 1-unit-tall rectangular brick.
     """
+    type: int = 0  # 0=Brick/Plate, 1=Slope
     l: int
     w: int
     h: int = 3
+    rotation: int = 0  # 0-3
     x: int
     y: int
     z: int
 
     @property
     def brick_id(self) -> int:
-        return dimensions_to_brick_id(self.l, self.w, self.h)
+        return dimensions_to_brick_id(self.type, self.l, self.w, self.h)
 
     @property
     def part_id(self) -> str:
         return brick_id_to_part_id(self.brick_id)
 
     @property
-    def ori(self) -> int:
-        return 1 if self.l > self.w else 0
+    def angle(self) -> float | None:
+        """Slope angle in degrees, or None for non-slope bricks."""
+        return None
 
     @property
     def area(self) -> int:
@@ -44,11 +48,20 @@ class Brick:
 
     @property
     def slice_2d(self) -> (slice, slice):
+        # from_json already swaps l,w for odd rotations
         return slice(self.x, self.x + self.l), slice(self.y, self.y + self.w)
 
     @property
     def slice(self) -> (slice, slice, slice):
         return *self.slice_2d, slice(self.z, self.z + self.h)
+
+    def overlaps(self, other: 'Brick') -> bool:
+        """Check if this brick's 3D bounding box overlaps another's."""
+        s1x, s1y, s1z = self.slice
+        s2x, s2y, s2z = other.slice
+        return (s1x.start < s2x.stop and s2x.start < s1x.stop and
+                s1y.start < s2y.stop and s2y.start < s1y.stop and
+                s1z.start < s2z.stop and s2z.start < s1z.stop)
 
     def __repr__(self):
         return self.to_txt()[:-1]
@@ -59,38 +72,54 @@ class Brick:
             'x': self.x,
             'y': self.y,
             'z': self.z,
-            'ori': self.ori,
+            'type': self.type,
+            'rotation': self.rotation,
         }
 
     def to_txt(self) -> str:
-        return f'{self.l}x{self.w}x{self.h} ({self.x},{self.y},{self.z})\n'
+        return f'T{self.type} {self.l}x{self.w}x{self.h} R{self.rotation} ({self.x},{self.y},{self.z})\n'
 
     def to_ldr(self, base_height: float = 0) -> str:
         x = (self.x + self.l * 0.5) * 20
         z = (self.y + self.w * 0.5) * 20
         y = (self.z + self.h + base_height) * -8
-        matrix = '0 0 1 0 1 0 -1 0 0' if self.ori == 0 else '-1 0 0 0 1 0 0 0 -1'
+        brick_matrices = [
+            '0 0 1 0 1 0 -1 0 0',      # R0 (270 deg)
+            '-1 0 0 0 1 0 0 0 -1',     # R1 (180 deg)
+            '0 0 -1 0 1 0 1 0 0',      # R2 (90 deg)
+            '1 0 0 0 1 0 0 0 1'        # R3 (0 deg / identity)
+        ]
+        matrix = brick_matrices[self.rotation % 4]
         line = f'1 115 {x} {y} {z} {matrix} {self.part_id}\n'
         step_line = '0 STEP\n'
         return line + step_line
 
     @classmethod
     def from_json(cls, brick_json: dict):
+        brick_type = brick_id_to_type(brick_json['brick_id'])
         l, w, h = brick_id_to_dimensions(brick_json['brick_id'])
-        if brick_json['ori'] == 1:
+        rotation = brick_json['rotation']
+        if brick_type == 1:
+            slope_dir = _ROTATION_TO_SLOPE_DIR[rotation]
+            return SlopeBrick(l=l, w=w, h=h, slope_direction=slope_dir, x=brick_json['x'], y=brick_json['y'], z=brick_json['z'])
+        if rotation % 2 == 1:
             l, w = w, l
         x, y, z = brick_json['x'], brick_json['y'], brick_json['z']
-        return cls(l=l, w=w, h=h, x=x, y=y, z=z)
+        return cls(type=brick_type, l=l, w=w, h=h, rotation=rotation, x=x, y=y, z=z)
 
     @classmethod
     def from_txt(cls, brick_txt: str):
         brick_txt = brick_txt.strip()
-        match = re.fullmatch(r'(\d+)x(\d+)x(\d+) \((\d+),(\d+),(\d+)\)', brick_txt)
+        match = re.fullmatch(r'T(\d+) (\d+)x(\d+)x(\d+) R(\d+) \((\d+),(\d+),(\d+)\)', brick_txt)
         if match is None:
             raise ValueError(f'Text Format brick is ill-formatted: {brick_txt}')
-
-        l, w, h, x, y, z = map(int, match.group(1, 2, 3, 4, 5, 6))
-        return cls(l=l, w=w, h=h, x=x, y=y, z=z)
+        brick_type = int(match.group(1))
+        l, w, h = map(int, match.group(2, 3, 4))
+        rotation = int(match.group(5))
+        x, y, z = map(int, match.group(6, 7, 8))
+        if brick_type == 1:
+            return SlopeBrick(l=l, w=w, h=h, slope_direction=_ROTATION_TO_SLOPE_DIR[rotation], x=x, y=y, z=z)
+        return cls(type=brick_type, l=l, w=w, h=h, rotation=rotation, x=x, y=y, z=z)
 
     @classmethod
     def from_ldr(cls, brick_ldr: str):
@@ -99,24 +128,169 @@ class Brick:
             case ['1', _, x0, y0, z0, *matrix, part_id]:
                 x0, y0, z0 = map(float, (x0, y0, z0))
                 matrix_str = ' '.join(matrix)
-                if matrix_str == '0 0 1 0 1 0 -1 0 0':
-                    ori = 0
-                elif matrix_str == '-1 0 0 0 1 0 0 0 -1':
-                    ori = 1
-                else:
-                    raise ValueError(f'Invalid transformation matrix: {matrix_str}')
 
                 l, w, h = brick_id_to_dimensions(part_id_to_brick_id(part_id))
-                if ori == 1:
+                brick_type = brick_id_to_type(part_id_to_brick_id(part_id))
+
+                brick_matrix_to_rotation = {
+                    '0 0 1 0 1 0 -1 0 0': 0,
+                    '-1 0 0 0 1 0 0 0 -1': 1,
+                    '0 0 -1 0 1 0 1 0 0': 2,
+                    '1 0 0 0 1 0 0 0 1': 3,
+                }
+                slope_matrix_to_rotation = {
+                    '1 0 0 0 1 0 0 0 1': 0,
+                    '0 0 -1 0 1 0 1 0 0': 1,
+                    '-1 0 0 0 1 0 0 0 -1': 2,
+                    '0 0 1 0 1 0 -1 0 0': 3,
+                }
+                matrix_map = slope_matrix_to_rotation if brick_type == 1 else brick_matrix_to_rotation
+                if matrix_str not in matrix_map:
+                    raise ValueError(f'Invalid transformation matrix: {matrix_str}')
+                rotation = matrix_map[matrix_str]
+                if brick_type != 1 and rotation % 2 == 1:
                     l, w = w, l
 
-                x = int(x0 / 20 - l * 0.5)
-                y = int(z0 / 20 - w * 0.5)
+                if brick_type == 1:
+                    if rotation % 2 == 0:
+                        x = int(x0 / 20 - w * 0.5)
+                        y = int(z0 / 20 - l * 0.5)
+                    else:
+                        x = int(x0 / 20 - l * 0.5)
+                        y = int(z0 / 20 - w * 0.5)
+                else:
+                    x = int(x0 / 20 - l * 0.5)
+                    y = int(z0 / 20 - w * 0.5)
                 z = int(-y0 / 8 - h)
 
-                return cls(l=l, w=w, h=h, x=x, y=y, z=z)
+                if brick_type == 1:
+                    return SlopeBrick(l=l, w=w, h=h, slope_direction=_ROTATION_TO_SLOPE_DIR[rotation], x=x, y=y, z=z)
+                return cls(type=brick_type, l=l, w=w, h=h, rotation=rotation, x=x, y=y, z=z)
             case _:
                 raise ValueError(f"LDR format is ill-formatted: {brick_ldr}")
+
+
+_SLOPE_DIR_TO_ROTATION = {0: 1, 1: 2, 2: 3, 3: 0}
+_ROTATION_TO_SLOPE_DIR = {v: k for k, v in _SLOPE_DIR_TO_ROTATION.items()}
+
+
+@dataclass(frozen=True, order=True, kw_only=True)
+class SlopeBrick(Brick):
+    """A slope brick that knows its slope direction.
+
+    rotation is auto-derived from slope_direction and should not be passed.
+    """
+    slope_direction: int  # 0=+X, 1=+Y, 2=-X, 3=-Y
+
+    def __post_init__(self):
+        object.__setattr__(self, 'type', 1)
+        object.__setattr__(
+            self, 'rotation', _SLOPE_DIR_TO_ROTATION[self.slope_direction])
+
+    @staticmethod
+    def run(length: int, height: int) -> int:
+        """Effective horizontal advance per staircase step.
+
+        For h=3 slope bricks with length > 1, the top stud column overlaps
+        the next step, so the run is length - 1.  All other bricks advance
+        by their full length.
+        """
+        return length - 1 if height == 3 and length > 1 else length
+
+    @property
+    def angle(self) -> float:
+        """Slope angle in degrees (atan(h/run))."""
+        return math.degrees(math.atan(self.h / SlopeBrick.run(self.l, self.h)))
+
+    @property
+    def slice_2d(self) -> (slice, slice):
+        # Slope run (l) maps to LDR Z (our Y) for even rotation,
+        # and to LDR X (our X) for odd rotation.
+        if self.rotation % 2 == 0:
+            return slice(self.x, self.x + self.w), slice(self.y, self.y + self.l)
+        return slice(self.x, self.x + self.l), slice(self.y, self.y + self.w)
+
+    @staticmethod
+    def rotated_dim(l: int, w: int, rotation: int) -> tuple[int, int]:
+        """Return (dim_x, dim_y) for a slope brick's l/w given rotation."""
+        if rotation % 2 == 0:
+            return w, l
+        return l, w
+
+    @property
+    def rotated_dims(self) -> tuple[int, int]:
+        """Return (dim_x, dim_y) for this brick."""
+        return SlopeBrick.rotated_dim(self.l, self.w, self.rotation)
+
+    def slope_slice(
+        self,
+    ) -> tuple[tuple[slice, slice, slice], tuple[slice, slice, slice] | None]:
+        """Split this slope brick's slice into its sloping surface and flat stud column.
+
+        For h=3 bricks with l>1, the first l-1 columns (along the slope axis) are
+        the slope and the last column is a full-height stud. The stud portion can
+        connect to bricks above while the slope portion cannot. For h=2 or l=1
+        bricks, the entire footprint is slope and stud_slice is None.
+        """
+        sx, sy, sz = self.slice
+        run = SlopeBrick.run(self.l, self.h)
+        if run == self.l:
+            return (sx, sy, sz), None
+
+        if self.slope_direction in (0, 2):
+            if self.slope_direction == 0:  # +X: slope at low x, stud at high x
+                slope_x = slice(sx.start, sx.start + run)
+                stud_x = slice(sx.start + run, sx.stop)
+            else:  # -X: slope at high x, stud at low x
+                slope_x = slice(sx.stop - run, sx.stop)
+                stud_x = slice(sx.start, sx.stop - run)
+            return (slope_x, sy, sz), (stud_x, sy, sz)
+        else:
+            if self.slope_direction == 1:  # +Y: slope at high y, stud at low y
+                slope_y = slice(sy.stop - run, sy.stop)
+                stud_y = slice(sy.start, sy.stop - run)
+            else:  # -Y: slope at low y, stud at high y
+                slope_y = slice(sy.start, sy.start + run)
+                stud_y = slice(sy.start + run, sy.stop)
+            return (sx, slope_y, sz), (sx, stud_y, sz)
+
+    def to_ldr(self, base_height: float = 0) -> str:
+        # Slope run (l) maps to LDR Z (our Y) for even rotation,
+        # and to LDR X (our X) for odd rotation.
+        if self.h == 2:
+            # Cheese slopes: centered formula, origin at bottom
+            if self.rotation % 2 == 0:
+                x = (self.x + self.w * 0.5) * 20
+                z = (self.y + self.l * 0.5) * 20
+            else:
+                x = (self.x + self.l * 0.5) * 20
+                z = (self.y + self.w * 0.5) * 20
+            y = (self.z + base_height) * -8
+        else:
+            # h=3 slopes: offset formula, origin at top
+            if self.rotation == 0:
+                x = (self.x + self.w * 0.5) * 20
+                z = (self.y + self.l) * 20 - 10
+            elif self.rotation == 2:
+                x = (self.x + self.w * 0.5) * 20
+                z = self.y * 20 + 10
+            elif self.rotation == 1:
+                x = self.x * 20 + 10
+                z = (self.y + self.w * 0.5) * 20
+            elif self.rotation == 3:
+                x = (self.x + self.l) * 20 - 10
+                z = (self.y + self.w * 0.5) * 20
+            y = (self.z + self.h + base_height) * -8
+        slope_matrices = [
+            '1 0 0 0 1 0 0 0 1',       # R0 (identity)
+            '0 0 -1 0 1 0 1 0 0',      # R1 (90 deg)
+            '-1 0 0 0 1 0 0 0 -1',     # R2 (180 deg)
+            '0 0 1 0 1 0 -1 0 0',      # R3 (270 deg)
+        ]
+        matrix = slope_matrices[self.rotation % 4]
+        line = f'1 115 {x} {y} {z} {matrix} {self.part_id}\n'
+        step_line = '0 STEP\n'
+        return line + step_line
 
 
 class BrickStructure:
@@ -175,7 +349,7 @@ class BrickStructure:
 
     def brick_in_bounds(self, brick: Brick) -> bool:
         return (all(slice_.start >= 0 and slice_.stop <= self.world_dim[i] for i, slice_ in enumerate(brick.slice_2d))
-                and 0 <= brick.z < self.world_dim[2])
+                and 0 <= brick.z and brick.z + brick.h <= self.world_dim[2])
 
     def has_collisions(self) -> bool:
         return np.any(self.voxel_occupancy > 1)
@@ -211,7 +385,7 @@ class BrickStructure:
         if self.has_out_of_bounds_bricks():
             raise ValueError('Cannot compute stability scores - structure has out of bounds bricks.')
         scores, _, _, _, _, solver_optimal = stability_score(self.to_json(), brick_library,
-                                                             StabilityConfig(world_dimension=self.world_dim))
+                                                                 StabilityConfig(world_dimension=self.world_dim))
         return scores, solver_optimal
 
     @classmethod

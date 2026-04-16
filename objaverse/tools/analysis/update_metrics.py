@@ -5,8 +5,9 @@ from collections import defaultdict
 
 from pathlib import Path
 
-SCRIPT_DIR = Path(__file__).parent
+SCRIPT_DIR = Path(__file__).parent.parent.parent  # tools/analysis/ -> objaverse/
 ASSETS_DIR = str(SCRIPT_DIR / 'assets')
+MESHES_DIR = str(SCRIPT_DIR / 'data' / 'meshes' / 'general')
 RESULTS_DIR = SCRIPT_DIR / 'results'
 
 # Regex patterns for line-by-line parsing
@@ -20,12 +21,17 @@ FINISHED_PATTERN = re.compile(r"Finished in time: ([\d\.]+) s \| "
 
 import argparse
 
-def parse_logs(target_resolutions=None):
-    model_data = defaultdict(dict) # {uid: {config_name: stats}}
-    all_configs = set()
+def parse_logs(target_resolutions=None, assets_dir=None, results_dir=None, meshes_dir=None):
+    # Use provided directories or fall back to defaults
+    _assets_dir = assets_dir if assets_dir is not None else ASSETS_DIR
+    _results_dir = results_dir if results_dir is not None else RESULTS_DIR
+    _meshes_dir = meshes_dir if meshes_dir is not None else MESHES_DIR
 
-    # Pre-populate model_data with all glb files found in assets
-    glb_files = sorted(glob.glob(os.path.join(ASSETS_DIR, '*.glb')))
+    model_data = defaultdict(dict) # {uid: {config_name: stats}}
+    all_configs = {}  # {config_id: config_obj}
+
+    # Pre-populate model_data with all glb files found in meshes directory
+    glb_files = sorted(glob.glob(os.path.join(_meshes_dir, '*.glb')))
     for g in glb_files:
         filename = os.path.basename(g)
         uid = os.path.splitext(filename)[0]
@@ -33,53 +39,60 @@ def parse_logs(target_resolutions=None):
         # Just accessing it creates the entry in defaultdict
         _ = model_data[short_uid]
 
-    # Find all config directories
-    config_dirs = glob.glob(os.path.join(ASSETS_DIR, 'res_*'))
-    
-    for config_dir in config_dirs:
-        dir_name = os.path.basename(config_dir)
-        log_path = os.path.join(config_dir, 'logs.txt')
-        
-        if not os.path.exists(log_path):
-            continue
-            
-        # Beautify config name: res_20_heightpriority -> Res 20 HeightPriority
-        parts = dir_name.split('_')
-        try:
-            resolution = int(parts[1])
-        except (IndexError, ValueError):
-            continue
-            
-        if target_resolutions is not None and resolution not in target_resolutions:
-            continue
+    # Look for logs.txt directly in assets_dir
+    log_path = os.path.join(str(_assets_dir), 'logs.txt')
 
-        variant = ' '.join([p.capitalize() for p in parts[2:]])
-        
-        # Determine internal sort key and display name
-        # We want to sort by Resolution, then by Variant order (Default < Plates < HeightPriority < Volume < Others)
-        variant_rank = {
-            'Baseline': 0,
-            'Plates': 1,
-            'Volume': 2,
-            'Height': 3,
-            'Twopass': 4,
-            'Alignment': 5
-        }.get(variant, 99)
-        
+    if os.path.exists(log_path):
+        # Extract configuration info from directory name
+        dir_name = Path(_assets_dir).name
+
+        # Parse directory name for resolution and variant
+        # Examples: mesh_results, mesh_res_20, res_20_baseline, general_20, general_32, etc.
+        if 'res_' in dir_name.lower():
+            parts = dir_name.lower().split('_')
+            res_idx = parts.index('res') if 'res' in parts else parts.index([p for p in parts if 'res' in p][0].replace('res', ''))
+            if res_idx + 1 < len(parts):
+                try:
+                    resolution = int(parts[res_idx + 1])
+                except ValueError:
+                    resolution = 20
+            else:
+                resolution = 20
+
+            # Check for variant name
+            if len(parts) > res_idx + 2:
+                variant = ' '.join([p.capitalize() for p in parts[res_idx + 2:]])
+            else:
+                variant = ''
+        elif 'mesh_results' in dir_name:
+            resolution = 32
+            variant = 'Slopes'
+        elif '_' in dir_name:
+            # Handle patterns like "general_20", "buildings_32"
+            parts = dir_name.split('_')
+            if parts[-1].isdigit():
+                resolution = int(parts[-1])
+                variant = '_'.join(parts[:-1]).capitalize()
+            else:
+                resolution = 20
+                variant = dir_name.capitalize()
+        else:
+            resolution = 20
+            variant = dir_name.capitalize()
+
         config_obj = {
             'id': dir_name,
-            'display': f"Res {resolution} {variant}",
-            'sort_key': (resolution, variant_rank, variant),
+            'display': f"{variant} (Res {resolution})" if variant else f"Res {resolution}",
+            'sort_key': (resolution, 0, variant),
             'resolution': resolution,
             'variant': variant
         }
-        
-        # We can't put objects in a set easily if not hashable, so lets store by id in a dict
-        all_configs.add(config_obj['id'])
-        
+
+        all_configs[config_obj['id']] = config_obj
+
         with open(log_path, 'r') as f:
             lines = f.readlines()
-        
+
         # Line-by-line parsing with state tracking
         current_uid = None
         for line in lines:
@@ -88,19 +101,19 @@ def parse_logs(target_resolutions=None):
             if conv_match:
                 current_uid = conv_match.group(1)
                 continue
-            
+
             # Check if current model was skipped - reset state
             skip_match = SKIPPED_PATTERN.search(line)
             if skip_match:
                 current_uid = None
                 continue
-            
+
             # Check for finished line - only process if we have a valid current_uid
             fin_match = FINISHED_PATTERN.search(line)
             if fin_match and current_uid:
                 time_val, bricks, comps, min_comps, stability = fin_match.groups()
                 short_uid = current_uid[:8]
-                
+
                 model_data[short_uid][config_obj['id']] = {
                     'time': float(time_val),
                     'bricks': int(bricks),
@@ -111,30 +124,8 @@ def parse_logs(target_resolutions=None):
                 }
                 current_uid = None  # Reset after successful match
 
-    # Sort configs list
-    # Reconstruct objects from one of the models or just re-parse dir names? 
-    # Let's just re-parse based on the collected IDs to have a sorted list of headers
-    sorted_configs = []
-    for cid in all_configs:
-        parts = cid.split('_')
-        resolution = int(parts[1])
-        variant = ' '.join([p.capitalize() for p in parts[2:]])
-        variant_rank = {
-            'Baseline': 0,
-            'Plates': 1,
-            'Volume': 2,
-            'Height': 3,
-            'Twopass': 4,
-            'Alignment': 5
-        }.get(variant, 99)
-        
-        sorted_configs.append({
-            'id': cid,
-            'display': f"Res {resolution} {variant}",
-            'sort_key': (resolution, variant_rank, variant)
-        })
-    
-    sorted_configs.sort(key=lambda x: x['sort_key'])
+    # Sort configs list using the stored config objects
+    sorted_configs = sorted(all_configs.values(), key=lambda x: x['sort_key'])
     return model_data, sorted_configs
 
 def generate_html(model_data, sorted_configs):
@@ -345,15 +336,58 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Generate comparison metrics HTML.')
     parser.add_argument('--resolutions', nargs='+', type=int, default=None, help='Filter by specific resolutions (e.g., 20 50)')
     parser.add_argument('-o', '--output', type=str, default=None, help='Output HTML file path. Defaults to objaverse/comparison_metrics.html')
+    parser.add_argument('-c', '--compare', action='store_true', help='Compare mode: provide multiple --assets-dir paths')
+    parser.add_argument('--assets-dir', type=str, nargs='+', default=None, help='Assets directory containing logs.txt (can be multiple with -c)')
+    parser.add_argument('--meshes-dir', type=str, required=True, help='Directory containing .glb mesh files')
+    parser.add_argument('--results-dir', type=str, default=None, help='Results directory for output (default: results/)')
     args = parser.parse_args()
 
-    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    output_path = args.output if args.output else str(RESULTS_DIR / 'comparison_metrics.html')
+    # Set directories from args or use defaults
+    meshes_dir = Path(args.meshes_dir).resolve()
+    results_dir = Path(args.results_dir).resolve() if args.results_dir else RESULTS_DIR
+    results_dir.mkdir(parents=True, exist_ok=True)
+    output_path = args.output if args.output else str(results_dir / 'comparison_metrics.html')
 
-    data, configs = parse_logs(target_resolutions=args.resolutions)
-    html_content = generate_html(data, configs)
+    # Handle compare mode with multiple assets directories
+    if args.compare:
+        if not args.assets_dir or len(args.assets_dir) < 2:
+            parser.error("-c/--compare requires at least 2 --assets-dir paths")
+
+        # Merge data from multiple directories
+        merged_data = defaultdict(dict)
+        all_configs = []
+
+        for asset_path in args.assets_dir:
+            asset_dir = Path(asset_path).resolve()
+            data, configs = parse_logs(
+                target_resolutions=args.resolutions,
+                assets_dir=asset_dir,
+                results_dir=results_dir,
+                meshes_dir=meshes_dir
+            )
+
+            # Merge model data
+            for uid, runs in data.items():
+                merged_data[uid].update(runs)
+
+            # Collect all configs
+            all_configs.extend(configs)
+
+        # Sort configs by resolution
+        all_configs.sort(key=lambda x: x['sort_key'])
+        html_content = generate_html(merged_data, all_configs)
+    else:
+        # Single directory mode
+        assets_dir = Path(args.assets_dir[0]).resolve() if args.assets_dir else ASSETS_DIR
+        data, configs = parse_logs(
+            target_resolutions=args.resolutions,
+            assets_dir=assets_dir,
+            results_dir=results_dir,
+            meshes_dir=meshes_dir
+        )
+        html_content = generate_html(data, configs)
 
     with open(output_path, 'w') as f:
         f.write(html_content)
 
-    print(f"Successfully generated {output_path} from {len(configs)} configurations.")
+    print(f"Successfully generated {output_path} with {len(html_content)} characters.")

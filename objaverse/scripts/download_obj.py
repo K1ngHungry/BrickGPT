@@ -5,19 +5,25 @@ import os
 import multiprocessing
 import shutil
 
-def download_objaverse_assets(csv_path: str, output_dir: str = "assets"):
+def download_objaverse_assets(csv_path: str, output_dir: str = "assets", max_count: int = 15):
     """
     Downloads Objaverse assets specified in a CSV file.
-    
+
     Args:
         csv_path: Path to the CSV file containing UIDs.
         output_dir: Directory to save the downloaded assets.
+        max_count: Maximum number of models to download (default: None, downloads all).
     """
-    
+
     # Read the CSV to get the UIDs
     df = pd.read_csv(csv_path)
     uids = df["UID"].tolist()
-    print(f"Found {len(uids)} UIDs to download.")
+    print(f"Found {len(uids)} UIDs in CSV.")
+
+    # Limit to max_count if specified
+    if max_count is not None:
+        uids = uids[:max_count]
+        print(f"Limiting download to {len(uids)} models.")
 
     # Create the output directory if it doesn't exist
     if not os.path.exists(output_dir):
@@ -49,11 +55,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Download Objaverse assets from a CSV file.")
     parser.add_argument("csv_path", help="Path to the CSV file containing UIDs")
     parser.add_argument("output_dir", nargs="?", default="assets", help="Directory to save downloaded assets")
-    
+    parser.add_argument("-n", "--max-count", type=int, default=15, help="Maximum number of models to download (default: 15)")
+
     args = parser.parse_args()
 
     # Resolve paths relative to current working directory or absolute paths
     csv_file_path = os.path.abspath(args.csv_path)
     output_directory = os.path.abspath(args.output_dir)
-    
-    download_objaverse_assets(csv_file_path, output_directory)
+
+    download_objaverse_assets(csv_file_path, output_directory, max_count=args.max_count)

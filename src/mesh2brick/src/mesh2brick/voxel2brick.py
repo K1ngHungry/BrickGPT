@@ -28,9 +28,9 @@ def k_ring_neighbors(node, k: int, graph: nx.Graph) -> list:
     return list(shortest_paths.keys())
 
 
-def valid_brick(l: int, w: int, h: int) -> bool:
+def valid_brick(l: int, w: int, h: int, brick_type: int = 0) -> bool:
     try:
-        dimensions_to_brick_id(l, w, h)
+        dimensions_to_brick_id(brick_type, l, w, h)
         return True
     except ValueError:
         return False
@@ -38,29 +38,42 @@ def valid_brick(l: int, w: int, h: int) -> bool:
 
 def get_merged_brick(b1: Brick, b2: Brick) -> Brick | None:
     assert b1.z == b2.z
+    if b1.type != b2.type:
+        return None
 
     if b1.x == b2.x and b1.l == b2.l and b1.h == b2.h and (b1.y + b1.w == b2.y or b2.y + b2.w == b1.y):
         new_l, new_w = b1.l, b1.w + b2.w
-        if valid_brick(new_l, new_w, b1.h):
+        if valid_brick(new_l, new_w, b1.h, brick_type=b1.type):
             new_x, new_y = b1.x, min(b1.y, b2.y)
-            return Brick(l=new_l, w=new_w, h=b1.h, x=new_x, y=new_y, z=b1.z)
+            if b1.type == 0:
+                rotation = 1 if new_l > new_w else 0
+            else:
+                rotation = b1.rotation
+            return Brick(type=b1.type, l=new_l, w=new_w, h=b1.h, rotation=rotation, x=new_x, y=new_y, z=b1.z)
 
     elif b1.y == b2.y and b1.w == b2.w and b1.h == b2.h and (b1.x + b1.l == b2.x or b2.x + b2.l == b1.x):
+        if b1.type == 1:
+            return None  # Cannot merge slope bricks along their run dimension
         new_l, new_w = b1.l + b2.l, b1.w
-        if valid_brick(new_l, new_w, b1.h):
+        if valid_brick(new_l, new_w, b1.h, brick_type=b1.type):
             new_x, new_y = min(b1.x, b2.x), b1.y
-            return Brick(l=new_l, w=new_w, h=b1.h, x=new_x, y=new_y, z=b1.z)
+            if b1.type == 0:
+                rotation = 1 if new_l > new_w else 0
+            else:
+                rotation = b1.rotation
+            return Brick(type=b1.type, l=new_l, w=new_w, h=b1.h, rotation=rotation, x=new_x, y=new_y, z=b1.z)
 
     return None
 
 
 class Voxel2Brick:
-    def __init__(self, voxels: np.ndarray, max_failures: int = 10, seed: int = 42):
+    def __init__(self, voxels: np.ndarray, max_failures: int = 10, seed: int = 42, use_plates: bool = True):
         self.voxels = voxels.astype(bool)
         self.bricks = ConnectivityBrickStructure(voxels.shape)
 
         self.n_failures = 0
         self.max_failures = max_failures
+        self.allowed_heights = (3, 1) if use_plates else (3,)
 
         self.rng = np.random.default_rng(seed)
 
@@ -80,7 +93,7 @@ class Voxel2Brick:
         t_start = time.time()
 
         # Initialize structure greedily
-        self._brickify_voxels_greedy(self.voxels, self._greedy_priority)
+        self._brickify_voxels_greedy(self.voxels, self._greedy_priority, allowed_heights=self.allowed_heights)
         min_components_possible = nx.number_connected_components(self.bricks.neighbor_graph)
 
         # Split and re-merge critical connectivity areas
@@ -93,7 +106,8 @@ class Voxel2Brick:
             removed_bricks = self.bricks.remove_voxel_subset(critical_voxels)
             reverse_layer_order = (self.rng.uniform() > 0.5)
             self._brickify_voxels_greedy(critical_voxels, self._component_priority,
-                                         reverse_layer_order=reverse_layer_order)
+                                         reverse_layer_order=reverse_layer_order,
+                                         allowed_heights=self.allowed_heights)
 
             # Are the results better?
             new_n_components = self.bricks.n_components()
@@ -181,19 +195,24 @@ class Voxel2Brick:
                                allowed_heights: tuple[int, ...] = (3,1)) -> None:
         brick_candidates = []
         for h in allowed_heights:
-            brick_candidates.extend([(v['length'], v['width'], v['height']) for v in brick_library.values()
-                                     if v['height'] == h])
-            brick_candidates.extend([(v['width'], v['length'], v['height']) for v in brick_library.values()
-                                     if v['length'] != v['width'] and v['height'] == h])
+            # Library order (l <= w) -> rotation=0
+            brick_candidates.extend([(v.get('type', 0), v['length'], v['width'], v['height'], 0)
+                                     for v in brick_library.values()
+                                     if v['height'] == h and v.get('type', 0) != 1])
+            # Swapped (l > w) -> rotation=1
+            brick_candidates.extend([(v.get('type', 0), v['width'], v['length'], v['height'], 1)
+                                     for v in brick_library.values()
+                                     if v['length'] != v['width'] and v['height'] == h and v.get('type', 0) != 1])
 
         # Enumerate possible brick placements
         min_x = first_nonzero_idx(voxel_subset[..., z].sum(axis=1))
         max_x = self.max_x - first_nonzero_idx(voxel_subset[..., z].sum(axis=1)[::-1])
         min_y = first_nonzero_idx(voxel_subset[..., z].sum(axis=0))
         max_y = self.max_y - first_nonzero_idx(voxel_subset[..., z].sum(axis=0)[::-1])
-        all_brick_placements = [Brick(l=l, w=w, h=h, x=x, y=y, z=z)
-                                for l, w, h in brick_candidates
-                                for x in range(min_x, max_x - l + 1) for y in range(min_y, max_y - w + 1)]
+        all_brick_placements = [Brick(type=t, l=l, w=w, h=h, rotation=r, x=x, y=y, z=z)
+                                for t, l, w, h, r in brick_candidates
+                                for x in range(min_x, max_x - l + 1) for y in range(min_y, max_y - w + 1)
+                                if z + h <= self.max_z]
 
         # Filter out bricks that are not completely contained within the voxels
         valid_brick_placements = list(filter(lambda b: voxel_subset[b.slice].all(), all_brick_placements))
@@ -250,7 +269,7 @@ class Voxel2Brick:
         tier_top = (brick.z // 3 + 1) * 3
         brick_top = brick.z + brick.h
         top_alignment = 3 if brick_top > tier_top else tier_top - brick_top
-        ori_priority = (-1 if brick.ori == 0 else 1) * (-1) ** (brick.z // 3)
+        ori_priority = (-1 if brick.rotation % 2 == 0 else 1) * (-1) ** (brick.z // 3)
         return top_alignment, ori_priority
 
     def _count_connecting_components(self, brick: Brick) -> int:
@@ -260,7 +279,7 @@ class Voxel2Brick:
         components = set()
         if brick.z > 0:
             components |= set(np.unique(self.bricks.component_labels()[*brick.slice_2d, brick.z - 1])) - {0}
-        if brick.z < self.max_z - 1:
+        if brick.z + brick.h < self.max_z:
             components |= set(np.unique(self.bricks.component_labels()[*brick.slice_2d, brick.z + brick.h])) - {0}
         return len(components)
 

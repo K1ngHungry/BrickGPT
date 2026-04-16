@@ -770,6 +770,7 @@ dependencies = [
     { name = "networkx" },
     { name = "numpy" },
     { name = "open3d" },
+    { name = "scipy" },
 ]
 
 [package.dev-dependencies]
@@ -784,6 +785,7 @@ requires-dist = [
     { name = "networkx" },
     { name = "numpy" },
     { name = "open3d" },
+    { name = "scipy" },
 ]
 
 [package.metadata.requires-dev]

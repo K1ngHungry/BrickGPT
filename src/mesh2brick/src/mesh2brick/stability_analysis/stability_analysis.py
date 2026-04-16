@@ -73,7 +73,7 @@ def stability_score(brick_structure, brick_library, cfg=StabilityConfig()):
         brick_id = str(brick["brick_id"])
         h = brick_library[brick_id]["height"]
 
-        if brick["ori"] == 0:
+        if brick["rotation"] % 2 == 0:
             l = brick_library[brick_id]["length"]
             w = brick_library[brick_id]["width"]
         else:
@@ -86,7 +86,7 @@ def stability_score(brick_structure, brick_library, cfg=StabilityConfig()):
             four_pt_connections = 1
         else:
             four_pt_connections = 0
-            
+
         for x in range(brick_x, brick_x + l):
             for y in range(brick_y, brick_y + w):
                 for z_offset in range(h):
@@ -125,7 +125,7 @@ def stability_score(brick_structure, brick_library, cfg=StabilityConfig()):
         
         h = brick_library[brick_id]["height"]
 
-        if brick["ori"] == 0:
+        if brick["rotation"] % 2 == 0:
             l = brick_library[brick_id]["length"]
             w = brick_library[brick_id]["width"]
         else:
@@ -205,7 +205,7 @@ def stability_score(brick_structure, brick_library, cfg=StabilityConfig()):
         
         h = brick_library[brick_id]["height"]
 
-        if brick["ori"] == 0:
+        if brick["rotation"] % 2 == 0:
             l = brick_library[brick_id]["length"]
             w = brick_library[brick_id]["width"]
         else:
@@ -500,7 +500,7 @@ def stability_score(brick_structure, brick_library, cfg=StabilityConfig()):
         
         h = brick_library[brick_id]["height"]
 
-        if brick["ori"] == 0:
+        if brick["rotation"] % 2 == 0:
             l = brick_library[brick_id]["length"]
             w = brick_library[brick_id]["width"]
         else:
