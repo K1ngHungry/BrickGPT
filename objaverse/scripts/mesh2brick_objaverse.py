@@ -12,7 +12,7 @@ def _process_baseline(file_path: Path, resolution: int):
     """Standard Mesh2Brick pipeline without slopes."""
     from mesh2brick.mesh2brick import Mesh2Brick
 
-    converter = Mesh2Brick(world_dim=(resolution, resolution, resolution * 3))
+    converter = Mesh2Brick(world_dim=(resolution, resolution, resolution))
     bricks = converter(str(file_path))
     return bricks
 
