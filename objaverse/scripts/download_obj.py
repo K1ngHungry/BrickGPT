@@ -53,14 +53,14 @@ import argparse
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Download Objaverse assets from a CSV file.")
-    parser.add_argument("csv_path", help="Path to the CSV file containing UIDs")
-    parser.add_argument("output_dir", nargs="?", default="assets", help="Directory to save downloaded assets")
-    parser.add_argument("-n", "--max-count", type=int, default=15, help="Maximum number of models to download (default: 15)")
+    parser.add_argument("-c", "--csv", required=True, help="Path to the CSV file containing UIDs")
+    parser.add_argument("-o", "--output-dir", default="assets", help="Directory to save downloaded assets (default: assets)")
+    parser.add_argument("-n", "--max-count", type=int, default=None, help="Maximum number of models to download (default: no limit)")
 
     args = parser.parse_args()
 
     # Resolve paths relative to current working directory or absolute paths
-    csv_file_path = os.path.abspath(args.csv_path)
+    csv_file_path = os.path.abspath(args.csv)
     output_directory = os.path.abspath(args.output_dir)
 
     download_objaverse_assets(csv_file_path, output_directory, max_count=args.max_count)
