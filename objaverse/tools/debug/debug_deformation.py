@@ -415,11 +415,13 @@ def main():
                         help="Path to input GLB file")
     parser.add_argument("-o", "--output-dir", default="objaverse/experiments/slopes/test/",
                         help="Output directory for LDR files")
-    parser.add_argument("--resolution", "-r", type=int, default=20,
+    parser.add_argument("-r", "--resolution", type=int, default=20,
                         help="Target resolution (default 20)")
+    parser.add_argument("-v", "--verbose", action="store_true",
+                        help="Enable verbose diagnostic output")
     parser.add_argument("--x-rotation", type=float, default=90.0,
                         help="X rotation in degrees (default 90.0)")
-    
+
     _defaults = SlopeConfig()
     parser.add_argument("--planar-err", type=float, default=_defaults.planar_err,
                         help=f"Faces within this angle of horizontal/vertical are excluded (default {_defaults.planar_err})")
@@ -427,9 +429,6 @@ def main():
                         help=f"Max angular difference for BFS grouping (default {_defaults.normal_err})")
     parser.add_argument("--min-area", type=float, default=_defaults.min_area,
                         help=f"Minimum region area as fraction of total mesh area (default {_defaults.min_area})")
-
-    parser.add_argument("-v", "--verbose", action="store_true",
-                        help="Enable verbose diagnostic output")
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir)

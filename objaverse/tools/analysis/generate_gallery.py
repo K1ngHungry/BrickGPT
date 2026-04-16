@@ -243,13 +243,15 @@ def generate_html(models, configs, model_stats, output_dir):
 
 def main():
     parser = argparse.ArgumentParser(description='Generate comparison gallery.')
-    parser.add_argument('-a', '--assets-dir', type=str, default=None, help='Assets directory containing .glb files (default: assets/)')
-    parser.add_argument('-o', '--output-dir', type=str, default=None, help='Output directory (default: results/)')
+    parser.add_argument('-a', '--assets-dir', type=str, default=None, help='Assets/results directory containing logs.txt and .png files (default: assets/)')
+    parser.add_argument('-m', '--meshes-dir', type=str, default=None, help='Directory containing .glb mesh files (default: data/meshes/general/)')
+    parser.add_argument('-o', '--output-dir', type=str, default=None, help='Output directory for gallery HTML (default: results/)')
     parser.add_argument('-r', '--resolutions', nargs='+', type=int, default=None, help='Filter by specific resolutions (e.g., 20 50)')
     args = parser.parse_args()
 
     # Set directories from args or use defaults
     assets_dir = Path(args.assets_dir).resolve() if args.assets_dir else ASSETS_DIR
+    meshes_dir = Path(args.meshes_dir).resolve() if args.meshes_dir else SCRIPT_DIR / "data" / "meshes" / "general"
     output_dir = Path(args.output_dir).resolve() if args.output_dir else RESULTS_DIR
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -269,34 +271,30 @@ def main():
         return
 
     # parse_logs expects:
-    # - assets_dir: directory containing logs.txt and PNG files (the output directory)
+    # - assets_dir: directory containing logs.txt and PNG files
     # - meshes_dir: directory containing GLB files (optional)
     model_stats, configs = parse_logs(
         target_resolutions=args.resolutions,
-        assets_dir=str(output_dir),  # Where logs.txt and PNGs are
-        meshes_dir=str(assets_dir)   # Where GLB files are
+        assets_dir=str(assets_dir),   # Where logs.txt and PNGs are
+        meshes_dir=str(meshes_dir)    # Where GLB files are
     )
 
     # 2. Build Models Dict (GLB + Renders)
     # models = { 'uid': { 'glb': path, 'renders': {config_id: png_path} } }
     models = {}
 
-    # Find GLBs in assets_dir (which we're using as meshes_dir)
-    glb_files = list(assets_dir.glob("*.glb"))
-    if not glb_files:
-        # Fallback to meshes subdirectory
-        meshes_dir = SCRIPT_DIR / "data" / "meshes" / "general"
-        glb_files = list(meshes_dir.glob("*.glb"))
-    print(f"Found {len(glb_files)} source GLB files.")
+    # Find GLBs in meshes_dir
+    glb_files = list(meshes_dir.glob("*.glb"))
+    print(f"Found {len(glb_files)} source GLB files in {meshes_dir}.")
     for glb in glb_files:
         uid = glb.stem
         models[uid] = {'glb': glb, 'renders': {}}
 
-    # Find Renders - PNGs should be in the same directory as logs.txt (output_dir)
+    # Find Renders - PNGs should be in the same directory as logs.txt (assets_dir)
     for conf in configs:
         cid = conf['id']
-        # PNGs are in output_dir, not in subdirectories
-        png_files = list(output_dir.glob("*.png"))
+        # PNGs are in assets_dir
+        png_files = list(assets_dir.glob("*.png"))
         for png in png_files:
             uid = png.stem
             if uid in models:

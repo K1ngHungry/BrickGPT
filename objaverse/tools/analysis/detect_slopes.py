@@ -164,11 +164,11 @@ def main():
     parser = argparse.ArgumentParser(description="Detect slope regions and output mesh")
     parser.add_argument("input", help="Input mesh file (GLB, OBJ, STL, etc.)")
     parser.add_argument("output", help="Output mesh file for slope regions only")
-    parser.add_argument("--full-mesh", "-f", help="Optional: output full mesh with slopes colored")
-    parser.add_argument("--deformed-slopes", "-d", help="Optional: output deformed slope regions")
-    parser.add_argument("--deformed-full", help="Optional: output deformed full mesh with slopes colored")
-    parser.add_argument("--resolution", "-r", type=int, default=20,
+    parser.add_argument("-d", "--deformed-slopes", help="Optional: output deformed slope regions")
+    parser.add_argument("-f", "--full-mesh", help="Optional: output full mesh with slopes colored")
+    parser.add_argument("-r", "--resolution", type=int, default=20,
                         help="Target resolution for deformation (default: 20)")
+    parser.add_argument("--deformed-full", help="Optional: output deformed full mesh with slopes colored")
     parser.add_argument("--x-rotation", type=float, default=90.0,
                         help="X rotation in degrees (default: 90.0)")
 
