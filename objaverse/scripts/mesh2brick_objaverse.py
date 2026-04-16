@@ -182,11 +182,11 @@ def convert_objaverse_assets(resolution: int, output_dir: str = None, timeout: i
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Convert Objaverse assets to LEGO bricks.")
     parser.add_argument("-a", "--assets-dir", type=str, default=None, help="Input directory containing .glb files (default: assets/)")
-    parser.add_argument("-ds", "--disable-slopes", action="store_true", help="Disable slopes (use baseline pipeline only)")
+    parser.add_argument("-es", "--enable-slopes", action="store_true", help="Enable slope detection (default: disabled for this experiment)")
     parser.add_argument("-o", "--output-dir", type=str, default=None, help="Output directory (default: assets/res_<resolution>)")
     parser.add_argument("-r", "--resolution", type=int, default=20, help="Voxel resolution (default: 20)")
     parser.add_argument("-t", "--timeout", type=int, default=None, help="Timeout in seconds per file (default: no timeout)")
     args = parser.parse_args()
 
-    enable_slopes = not args.disable_slopes
+    enable_slopes = args.enable_slopes
     convert_objaverse_assets(args.resolution, args.output_dir, args.timeout, enable_slopes, args.assets_dir)
