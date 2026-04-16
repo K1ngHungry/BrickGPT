@@ -57,8 +57,8 @@ def render_assets(input_dir=None, force_all=False):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Render Objaverse LDR files to PNG.")
-    parser.add_argument("--input-dir", type=str, default=None, help="Directory containing .ldr files (default: assets/mesh_results)")
-    parser.add_argument("--force", action="store_true", help="Force re-rendering of existing PNGs")
+    parser.add_argument("--input-dir", "-i", type=str, default=None, help="Directory containing .ldr files (default: assets/mesh_results)")
+    parser.add_argument("--force", "-f", action="store_true", help="Force re-rendering of existing PNGs")
     args = parser.parse_args()
 
     render_assets(input_dir=args.input_dir, force_all=args.force)

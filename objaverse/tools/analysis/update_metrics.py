@@ -334,11 +334,11 @@ def generate_html(model_data, sorted_configs):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Generate comparison metrics HTML.')
-    parser.add_argument('--resolutions', nargs='+', type=int, default=None, help='Filter by specific resolutions (e.g., 20 50)')
+    parser.add_argument('--resolutions', '-r', nargs='+', type=int, default=None, help='Filter by specific resolutions (e.g., 20 50)')
     parser.add_argument('-o', '--output', type=str, default=None, help='Output HTML file path. Defaults to objaverse/comparison_metrics.html')
     parser.add_argument('-c', '--compare', action='store_true', help='Compare mode: provide multiple --assets-dir paths')
-    parser.add_argument('--assets-dir', type=str, nargs='+', default=None, help='Assets directory containing logs.txt (can be multiple with -c)')
-    parser.add_argument('--meshes-dir', type=str, required=True, help='Directory containing .glb mesh files')
+    parser.add_argument('--assets-dir', '-a', type=str, nargs='+', default=None, help='Assets directory containing logs.txt (can be multiple with -c)')
+    parser.add_argument('--meshes-dir', '-m', type=str, required=True, help='Directory containing .glb mesh files')
     parser.add_argument('--results-dir', type=str, default=None, help='Results directory for output (default: results/)')
     args = parser.parse_args()
 

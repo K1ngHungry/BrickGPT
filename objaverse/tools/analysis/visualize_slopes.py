@@ -569,7 +569,7 @@ def main():
     parser = argparse.ArgumentParser(description="Slope detection gallery for objaverse assets")
     parser.add_argument("-o", "--output", default=None,
                         help="Output HTML path (default: objaverse/slope_gallery.html)")
-    parser.add_argument("--assets-dir", type=str, default=None,
+    parser.add_argument("--assets-dir", "-a", type=str, default=None,
                         help="Directory containing .glb files (default: assets/buildings)")
     parser.add_argument("--results-dir", type=str, default=None,
                         help="Directory containing .png renders and logs.txt (default: assets/slope_buildings)")
