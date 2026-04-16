@@ -38,7 +38,7 @@ wandb
 # Objaverse outputs and data
 objaverse/assets/
 objaverse/results/
-objaverse/experiments/
+objaverse/heuristic_experiments/
 objaverse/data/meshes/
 objaverse/data/glbs/
 objaverse/meshes/
