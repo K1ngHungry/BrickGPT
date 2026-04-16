@@ -92,8 +92,11 @@ class Voxel2Brick:
     def __call__(self) -> list[Brick]:
         t_start = time.time()
 
-        # Initialize structure greedily
-        self._brickify_voxels_greedy(self.voxels, self._greedy_priority, allowed_heights=self.allowed_heights)
+        # Initialize structure greedily - Pass 1: Height 3 Only, will leave gaps
+        self._brickify_voxels_greedy(self.voxels, self._greedy_priority, allowed_heights=(3,), check_complete=False)
+
+        # Initialize structure greedily - Pass 2: Fill remaining gaps with Height 3 and 1
+        self._brickify_voxels_greedy(self.voxels, self._greedy_priority, allowed_heights=(3, 1))
         min_components_possible = nx.number_connected_components(self.bricks.neighbor_graph)
 
         # Split and re-merge critical connectivity areas
