@@ -47,7 +47,7 @@ def parse_logs(target_resolutions=None, assets_dir=None, results_dir=None, meshe
         dir_name = Path(_assets_dir).name
 
         # Parse directory name for resolution and variant
-        # Examples: mesh_results, mesh_res_20, res_20_baseline, etc.
+        # Examples: mesh_results, mesh_res_20, res_20_baseline, general_20, general_32, etc.
         if 'res_' in dir_name.lower():
             parts = dir_name.lower().split('_')
             res_idx = parts.index('res') if 'res' in parts else parts.index([p for p in parts if 'res' in p][0].replace('res', ''))
@@ -67,6 +67,15 @@ def parse_logs(target_resolutions=None, assets_dir=None, results_dir=None, meshe
         elif 'mesh_results' in dir_name:
             resolution = 32
             variant = 'Slopes'
+        elif '_' in dir_name:
+            # Handle patterns like "general_20", "buildings_32"
+            parts = dir_name.split('_')
+            if parts[-1].isdigit():
+                resolution = int(parts[-1])
+                variant = '_'.join(parts[:-1]).capitalize()
+            else:
+                resolution = 20
+                variant = dir_name.capitalize()
         else:
             resolution = 20
             variant = dir_name.capitalize()
@@ -327,23 +336,58 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Generate comparison metrics HTML.')
     parser.add_argument('--resolutions', nargs='+', type=int, default=None, help='Filter by specific resolutions (e.g., 20 50)')
     parser.add_argument('-o', '--output', type=str, default=None, help='Output HTML file path. Defaults to objaverse/comparison_metrics.html')
-    parser.add_argument('--assets-dir', type=str, default=None, help='Assets directory containing logs.txt (default: assets/)')
-    parser.add_argument('--meshes-dir', type=str, default=None, help='Directory containing .glb mesh files (default: objaverse/meshes/)')
+    parser.add_argument('-c', '--compare', action='store_true', help='Compare mode: provide multiple --assets-dir paths')
+    parser.add_argument('--assets-dir', type=str, nargs='+', default=None, help='Assets directory containing logs.txt (can be multiple with -c)')
+    parser.add_argument('--meshes-dir', type=str, required=True, help='Directory containing .glb mesh files')
     parser.add_argument('--results-dir', type=str, default=None, help='Results directory for output (default: results/)')
     args = parser.parse_args()
 
     # Set directories from args or use defaults
-    assets_dir = Path(args.assets_dir).resolve() if args.assets_dir else ASSETS_DIR
-    meshes_dir = Path(args.meshes_dir).resolve() if args.meshes_dir else MESHES_DIR
+    meshes_dir = Path(args.meshes_dir).resolve()
     results_dir = Path(args.results_dir).resolve() if args.results_dir else RESULTS_DIR
-
     results_dir.mkdir(parents=True, exist_ok=True)
     output_path = args.output if args.output else str(results_dir / 'comparison_metrics.html')
 
-    data, configs = parse_logs(target_resolutions=args.resolutions, assets_dir=assets_dir, results_dir=results_dir, meshes_dir=meshes_dir)
-    html_content = generate_html(data, configs)
+    # Handle compare mode with multiple assets directories
+    if args.compare:
+        if not args.assets_dir or len(args.assets_dir) < 2:
+            parser.error("-c/--compare requires at least 2 --assets-dir paths")
+
+        # Merge data from multiple directories
+        merged_data = defaultdict(dict)
+        all_configs = []
+
+        for asset_path in args.assets_dir:
+            asset_dir = Path(asset_path).resolve()
+            data, configs = parse_logs(
+                target_resolutions=args.resolutions,
+                assets_dir=asset_dir,
+                results_dir=results_dir,
+                meshes_dir=meshes_dir
+            )
+
+            # Merge model data
+            for uid, runs in data.items():
+                merged_data[uid].update(runs)
+
+            # Collect all configs
+            all_configs.extend(configs)
+
+        # Sort configs by resolution
+        all_configs.sort(key=lambda x: x['sort_key'])
+        html_content = generate_html(merged_data, all_configs)
+    else:
+        # Single directory mode
+        assets_dir = Path(args.assets_dir[0]).resolve() if args.assets_dir else ASSETS_DIR
+        data, configs = parse_logs(
+            target_resolutions=args.resolutions,
+            assets_dir=assets_dir,
+            results_dir=results_dir,
+            meshes_dir=meshes_dir
+        )
+        html_content = generate_html(data, configs)
 
     with open(output_path, 'w') as f:
         f.write(html_content)
 
-    print(f"Successfully generated {output_path} from {len(configs)} configurations.")
+    print(f"Successfully generated {output_path} with {len(html_content)} characters.")

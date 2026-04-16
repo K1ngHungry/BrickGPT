@@ -26,6 +26,7 @@ gurobi.log
 ldraw/
 
 *.csv
+.claude/
 
 # Output Artifacts (LDraw/Results)
 !LICENSE
@@ -58,3 +59,4 @@ shapenet/results/
 !*.md
 
 HISTORY.md
+key.txt
