@@ -227,6 +227,9 @@ def generate_html(model_data, sorted_configs):
         <tbody>
 """
 
+    # Total attempted models (from meshes_dir if provided, otherwise count models with data)
+    total_attempted = len(model_data)
+
     # Collect per-config stats for both tables
     config_stats = []
     for conf in sorted_configs:
@@ -260,7 +263,8 @@ def generate_html(model_data, sorted_configs):
                 count += 1
 
         config_stats.append({
-            'conf': conf, 'count': count, 'total_time': total_time,
+            'conf': conf, 'count': count, 'total_attempted': total_attempted,
+            'total_time': total_time,
             'total_bricks': total_bricks, 'stable_only_bricks': stable_only_bricks,
             'total_stability': total_stability,
             'stable_only_time': stable_only_time, 'stable_only_stability': stable_only_stability,
@@ -283,8 +287,8 @@ def generate_html(model_data, sorted_configs):
             html += f"<td>{avg_time:.2f}</td>"
             html += f"<td>{avg_bricks:.0f}</td>"
             html += f"<td{stab_class}>{avg_stability:.3f}</td>"
-            html += f"<td{unstable_class}>{s['unstable']} / {s['count']}</td>"
-            html += f"<td{disc_class}>{s['disconnected']} / {s['count']}</td>"
+            html += f"<td{unstable_class}>{s['unstable']} / {s['total_attempted']}</td>"
+            html += f"<td{disc_class}>{s['disconnected']} / {s['total_attempted']}</td>"
             html += "</tr>\n"
 
     html += """        </tbody>
@@ -318,7 +322,7 @@ def generate_html(model_data, sorted_configs):
             html += f"<td>{avg_time:.2f}</td>"
             html += f"<td>{avg_bricks:.0f}</td>"
             html += f"<td{stab_class}>{avg_stability:.3f}</td>"
-            html += f"<td>{s['stable_count']} / {s['count']}</td>"
+            html += f"<td>{s['stable_count']} / {s['total_attempted']}</td>"
             html += "</tr>\n"
 
     html += """        </tbody>
