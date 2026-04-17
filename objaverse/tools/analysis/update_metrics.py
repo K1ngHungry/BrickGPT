@@ -335,16 +335,29 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Generate comparison metrics HTML.')
     parser.add_argument('-a', '--assets-dir', type=str, nargs='+', default=None, help='Assets directory/directories containing logs.txt')
     parser.add_argument('-m', '--meshes-dir', type=str, default=None, help='Directory containing .glb mesh files (optional: shows all models including failed)')
-    parser.add_argument('-o', '--output-dir', type=str, default=None, help='Output directory (default: results/)')
+    parser.add_argument('-o', '--output', type=str, default=None, help='Output path (.html file) or directory (default: results/comparison_metrics.html)')
     parser.add_argument('-r', '--resolutions', nargs='+', type=int, default=None, help='Filter by specific resolutions (e.g., 20 50)')
     parser.add_argument('-c', '--compare', action='store_true', help='Compare mode: requires at least 2 --assets-dir paths')
     args = parser.parse_args()
 
     # Set directories from args or use defaults
     meshes_dir = Path(args.meshes_dir).resolve() if args.meshes_dir else None
-    output_dir = Path(args.output_dir).resolve() if args.output_dir else RESULTS_DIR
-    output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = str(output_dir / 'comparison_metrics.html')
+
+    # Handle output path - can be directory or full file path
+    if args.output:
+        output_arg = Path(args.output).resolve()
+        if args.output.endswith('.html'):
+            # Treat as full file path
+            output_path = str(output_arg)
+            output_arg.parent.mkdir(parents=True, exist_ok=True)
+        else:
+            # Treat as directory
+            output_arg.mkdir(parents=True, exist_ok=True)
+            output_path = str(output_arg / 'comparison_metrics.html')
+    else:
+        # Use default
+        RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+        output_path = str(RESULTS_DIR / 'comparison_metrics.html')
 
     # Handle compare mode with multiple assets directories
     if args.compare:
