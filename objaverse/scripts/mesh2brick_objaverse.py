@@ -8,11 +8,11 @@ SCRIPT_DIR = Path(__file__).parent.parent  # scripts/ -> objaverse/
 ASSETS_DIR = SCRIPT_DIR / "assets"
 
 
-def _process_baseline(file_path: Path, resolution: int):
+def _process_standard(file_path: Path, resolution: int):
     """Standard Mesh2Brick pipeline without slopes."""
     from mesh2brick.mesh2brick import Mesh2Brick
 
-    converter = Mesh2Brick(world_dim=(resolution, resolution, resolution))
+    converter = Mesh2Brick(world_dim=(resolution, resolution, resolution * 3))
     bricks = converter(str(file_path))
     return bricks
 
@@ -84,7 +84,7 @@ def process_single_file(file_path: Path, resolution: int, res_dir: Path, result_
         if enable_slopes:
             bricks = _process_with_slopes(file_path, resolution)
         else:
-            bricks = _process_baseline(file_path, resolution)
+            bricks = _process_standard(file_path, resolution)
 
         txt_output_path = res_dir / file_path.with_suffix(".txt").name
         with open(txt_output_path, "w") as f:
