@@ -245,17 +245,32 @@ def main():
     parser = argparse.ArgumentParser(description='Generate comparison gallery.')
     parser.add_argument('-a', '--assets-dir', type=str, default=None, help='Assets/results directory containing logs.txt and .png files (default: assets/)')
     parser.add_argument('-m', '--meshes-dir', type=str, default=None, help='Directory containing .glb mesh files (default: data/meshes/general/)')
-    parser.add_argument('-o', '--output-dir', type=str, default=None, help='Output directory for gallery HTML (default: results/)')
+    parser.add_argument('-o', '--output', type=str, default=None, help='Output path (.html file) or directory (default: results/gallery.html)')
     parser.add_argument('-r', '--resolutions', nargs='+', type=int, default=None, help='Filter by specific resolutions (e.g., 20 50)')
     args = parser.parse_args()
 
     # Set directories from args or use defaults
     assets_dir = Path(args.assets_dir).resolve() if args.assets_dir else ASSETS_DIR
     meshes_dir = Path(args.meshes_dir).resolve() if args.meshes_dir else SCRIPT_DIR / "data" / "meshes" / "general"
-    output_dir = Path(args.output_dir).resolve() if args.output_dir else RESULTS_DIR
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / "gallery.html"
+    # Handle output path - can be directory or full file path
+    if args.output:
+        output_arg = Path(args.output).resolve()
+        if args.output.endswith('.html'):
+            # Treat as full file path
+            output_path = output_arg
+            output_dir = output_arg.parent
+            output_dir.mkdir(parents=True, exist_ok=True)
+        else:
+            # Treat as directory
+            output_dir = output_arg
+            output_dir.mkdir(parents=True, exist_ok=True)
+            output_path = output_dir / 'gallery.html'
+    else:
+        # Use default
+        output_dir = RESULTS_DIR
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = output_dir / 'gallery.html'
 
     if not assets_dir.exists():
         print(f"Error: assets directory not found at {assets_dir}")
