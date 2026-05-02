@@ -58,6 +58,7 @@ shapenet/results/
 !requirements.txt
 !*.md
 
+SLOPE.md
 HISTORY.md
 SSH.md
 key.txt
