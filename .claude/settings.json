@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python llm/check_stability.py llm/outputs/house/v3.txt)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(f'stable={d[\\\\\"is_stable\\\\\"]}, max={d[\\\\\"max_score\\\\\"]:.3f}, mean={d[\\\\\"mean_score\\\\\"]:.3f}'\\)\")",
+      "Bash(python llm/render.py llm/outputs/kettlebell/v1.txt llm/outputs/kettlebell/v1)",
+      "Bash(python llm/check_connectivity.py llm/outputs/kettlebell/v1.txt)",
+      "Bash(python llm/check_connectivity.py llm/outputs/kettlebell/v2.txt)",
+      "Bash(python llm/render.py llm/outputs/kettlebell/v2.txt llm/outputs/kettlebell/v2)",
+      "Bash(python llm/check_stability.py llm/outputs/kettlebell/v2.txt)"
+    ]
+  }
+}
